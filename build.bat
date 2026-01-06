@@ -1,0 +1,1 @@
+gfortran -O2 -fdefault-real-8 -Wall -ffree-line-length-none hoch.f90 micro_time.f90 linalg.f90 json.f90 jsonx.f90 database_m.f90 udp_windows_m.f90 connection_m.f90 f16.f90 main.f90 -o main.exe -lws2_32

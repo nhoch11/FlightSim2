@@ -1,5 +1,4 @@
-module f16_m
-
+module vehicle_m
     use hoch_m
     use jsonx_m
     use micro_time_m
@@ -8,48 +7,82 @@ module f16_m
     ! use json_xtnsn_mod
     
     implicit none
-    character(len=256) :: output_file
-    
-    real :: weight, mass
-    real, dimension(3,3) :: I, I_inv, h
-    real, dimension(6) :: FM
-    real, dimension(3) :: Vwf
-    real, dimension(4) :: controls
-    logical :: verbose, verbose2
-    logical :: real_time
-    logical :: trimming
-    
 
-    character(:), allocatable :: init_type, trim_type
-    real :: trim_fd_step, trim_r_factor, trim_tol, u_trim, v_trim, w_trim, p_trim, q_trim, r_trim, sideslip0, gamma0
-    integer :: trim_max_iter
-    logical :: has_sideslip, has_gamma
+    type stall_settings_t
 
-    real :: t0, dt, tf, ref_area, ref_long, ref_lat
-    real, dimension(:), allocatable :: aero_ref_loc, eul0
-    real :: V0, zf0, phi0, theta0, psi0, p0, q0, r0
-    real :: Ixx0, Iyy0, Izz0, Ixz0, Ixy0, Iyz0, hx0, hy0, hz0
-    real :: Throt_0, Throt_a
-    real :: CL0, CLa, CLahat, CLqbar, CLde
-    real :: CSb, CSpbar, CSapbar, CSrbar, CSda, CSdr
-    real :: CD0, CD1, CD2, CDS2, CDqbar, CDaqbar, CDde, CDade, CDde2
-    real :: Clb, Clpbar, Clrbar, Clarbar, Clda, Cldr
-    real :: Cm0, Cma, Cmqbar, Cmahat, Cmde
-    real :: Cnb, Cnpbar, Cnapbar, Cnrbar, Cnda, Cnada, Cndr
-    real :: alpha0, beta0, da0, de0, dr0, tau0, rho0
+    end type stall_settings_t
 
-    real :: integrated_time, actual_time
+    type trim_settings_t
+        ! old trim settings
+        logical :: has_sideslip, has_gamma
+        character(:), allocatable :: init_type, trim_type
+        real :: trim_fd_step, trim_r_factor, trim_tol, u_trim, v_trim, w_trim, p_trim, q_trim, r_trim, sideslip0, gamma0
+        integer :: trim_max_iter
+        logical :: trimming
+    end type trim_settings_t
 
-    ! integer :: cpu_start_time, cpu_end_time
-    real :: cpu_start_time, cpu_end_time
-    real :: count_rate
-    
-    type(connection) :: graphics, control_udp
+    type vehicle_t
 
+        type(json_value), pointer :: j_vehicle
+
+        character(len=:), allocatable :: name
+        character(len=:), allocatable :: type
+        character(100) :: states_filename, rk4_filename
+
+        logical :: run_physics
+        logical :: save_states
+        logical :: iunit_states, iunit_rk4, iunit_trim
+        logical :: verbose, verbose2
+
+        ! mass constants
+        real :: weight, mass
+        real, dimension(3,3) :: I, I_inv, h
+        real, dimension(6) :: FM
+        real :: Ixx0, Iyy0, Izz0, Ixz0, Ixy0, Iyz0, hx0, hy0, hz0
+        
+        ! aero constants
+        real, dimension(:), allocatable :: aero_ref_loc
+        real :: ref_area, ref_long, ref_lat
+        real :: CL0, CLa, CLahat, CLqbar, CLde
+        real :: CD0, CD1, CD2, CDS2, CDqbar, CDaqbar, CDde, CDade, CDde2
+        real :: CSb, CSpbar, CSapbar, CSrbar, CSda, CSdr
+        real :: Clb, Clpbar, Clrbar, Clarbar, Clda, Cldr
+        real :: Cm0, Cma, Cmqbar, Cmahat, Cmde
+        real :: Cnb, Cnpbar, Cnapbar, Cnrbar, Cnda, Cnada, Cndr
+        real :: Throt_0, Throt_a
+        
+        ! stall model constants
+        logical :: include stall
+        type(stall_settings_t) :: CLstall, CDstall, Cmstall
+
+        ! intitialization constants
+        real, dimension(:), allocatable :: eul0
+        real, dimension(13) :: init_state
+        real :: V0, zf0
+
+        ! old init constants
+        real :: phi0, theta0, psi0, p0, q0, r0
+        real :: alpha0, beta0, da0, de0, dr0, tau0, rho0
+
+
+        ! variables
+        real, dimension(13) :: states
+        real, dimension(4) :: controls
+
+        type(trim_settings_t) :: trim
+
+        
+        ! old misc settings
+        type(connection) :: graphics, control_udp
+        real, dimension(3) :: Vwf
+
+    end type vehicle_t
+        
+        
 
 contains 
 
-    subroutine init(input_file)
+    subroutine vehicle_init(input_file)
         implicit none
         character(len=*), intent(in) :: input_file
         type(json_value), pointer :: j_main
@@ -153,67 +186,9 @@ contains
         call jsonx_get(j_main, "initial.type", init_type)
 
         if (init_type == "state") then
-            trimming = .false.
-            call jsonx_get(j_main, "initial.state.alpha[deg]", alpha0)
-            call jsonx_get(j_main, "initial.state.beta[deg]", beta0)
-            alpha0 = alpha0*pi/180.
-            beta0 = beta0*pi/180.
-            write(*,*) "beta0 rad = ", beta0
-
-            call jsonx_get(j_main, "initial.state.bank_angle[deg]", phi0)
-            call jsonx_get(j_main, "initial.state.elevation_angle[deg]", theta0)
-            call jsonx_get(j_main, "initial.state.heading_angle[deg]", psi0)
-            phi0 = phi0*pi/180.
-            theta0 = theta0*pi/180.
-            psi0 = psi0*pi/180.
-            
-            call jsonx_get(j_main, "initial.state.p[deg/s]",  p0)
-            call jsonx_get(j_main, "initial.state.q[deg/s]",  q0)
-            call jsonx_get(j_main, "initial.state.r[deg/s]",  r0)
-            p0 = p0*pi/180.
-            q0 = q0*pi/180.
-            r0 = r0*pi/180.
-            
-            call jsonx_get(j_main, "initial.state.aileron[deg]",  da0)
-            call jsonx_get(j_main, "initial.state.elevator[deg]",  de0)
-            call jsonx_get(j_main, "initial.state.rudder[deg]",  dr0)
-            call jsonx_get(j_main, "initial.state.throttle",  tau0)
-            da0 = da0*pi/180.
-            de0 = de0*pi/180.
-            dr0 = dr0*pi/180.
+            call init_to_state(t)
         else if (init_type == "trim") then
-            trimming = .true.
-            call jsonx_get(j_main, "initial.trim.type", trim_type)
-
-            has_sideslip = .false.
-            call json_get(j_main, "initial.trim.sideslip[deg]", sideslip0, has_sideslip)
-            if (has_sideslip) then
-                sideslip0 = sideslip0*pi/180.
-            end if
-
-            call json_get(j_main, "initial.trim.bank_angle[deg]", phi0, found)
-            if (found) then
-                phi0 = phi0*pi/180.
-            end if
-            
-            call jsonx_get(j_main, "initial.trim.heading_angle[deg]", psi0)
-            psi0 = psi0*pi/180.
-
-            call json_get(j_main, "initial.trim.climb_angle[deg]", gamma0, has_gamma)
-            write(*,*) " has gamma = ", has_gamma
-            if (has_gamma) then
-                gamma0 = gamma0*pi/180.
-            else
-                call jsonx_get(j_main, "initial.trim.elevation_angle[deg]", theta0)
-                theta0 = theta0*pi/180.
-            end if
-
-        
-
-            call jsonx_get(j_main, "initial.trim.solver.finite_difference_step_size", trim_fd_step)
-            call jsonx_get(j_main, "initial.trim.solver.relaxation_factor", trim_r_factor)
-            call jsonx_get(j_main, "initial.trim.solver.tolerance", trim_tol)
-            call jsonx_get(j_main, "initial.trim.solver.max_iterations", trim_max_iter)
+            call init_to_trim(t)
         else
             write(*,*) " Invalid initial type in json. must be trim or state. Quitting..."
             stop
@@ -232,8 +207,73 @@ contains
         call jsonx_get(j_main, "connections", j_connections)
         call jsonx_get(j_connections, "graphics", j_graphics)
         call graphics%init(j_graphics)
-    end subroutine init
+    end subroutine vehicle_init
 
+
+    subroutine init_to_state(t)
+        trimming = .false.
+        call jsonx_get(j_main, "initial.state.alpha[deg]", alpha0)
+        call jsonx_get(j_main, "initial.state.beta[deg]", beta0)
+        alpha0 = alpha0*pi/180.
+        beta0 = beta0*pi/180.
+        write(*,*) "beta0 rad = ", beta0
+
+        call jsonx_get(j_main, "initial.state.bank_angle[deg]", phi0)
+        call jsonx_get(j_main, "initial.state.elevation_angle[deg]", theta0)
+        call jsonx_get(j_main, "initial.state.heading_angle[deg]", psi0)
+        phi0 = phi0*pi/180.
+        theta0 = theta0*pi/180.
+        psi0 = psi0*pi/180.
+        
+        call jsonx_get(j_main, "initial.state.p[deg/s]",  p0)
+        call jsonx_get(j_main, "initial.state.q[deg/s]",  q0)
+        call jsonx_get(j_main, "initial.state.r[deg/s]",  r0)
+        p0 = p0*pi/180.
+        q0 = q0*pi/180.
+        r0 = r0*pi/180.
+        
+        call jsonx_get(j_main, "initial.state.aileron[deg]",  da0)
+        call jsonx_get(j_main, "initial.state.elevator[deg]",  de0)
+        call jsonx_get(j_main, "initial.state.rudder[deg]",  dr0)
+        call jsonx_get(j_main, "initial.state.throttle",  tau0)
+        da0 = da0*pi/180.
+        de0 = de0*pi/180.
+        dr0 = dr0*pi/180.
+    end subroutine init_to_state
+
+
+    subroutine init_to_trim(t)
+        trimming = .true.
+        call jsonx_get(j_main, "initial.trim.type", trim_type)
+
+        has_sideslip = .false.
+        call json_get(j_main, "initial.trim.sideslip[deg]", sideslip0, has_sideslip)
+        if (has_sideslip) then
+            sideslip0 = sideslip0*pi/180.
+        end if
+
+        call json_get(j_main, "initial.trim.bank_angle[deg]", phi0, found)
+        if (found) then
+            phi0 = phi0*pi/180.
+        end if
+        
+        call jsonx_get(j_main, "initial.trim.heading_angle[deg]", psi0)
+        psi0 = psi0*pi/180.
+
+        call json_get(j_main, "initial.trim.climb_angle[deg]", gamma0, has_gamma)
+        write(*,*) " has gamma = ", has_gamma
+        if (has_gamma) then
+            gamma0 = gamma0*pi/180.
+        else
+            call jsonx_get(j_main, "initial.trim.elevation_angle[deg]", theta0)
+            theta0 = theta0*pi/180.
+        end if
+
+        call jsonx_get(j_main, "initial.trim.solver.finite_difference_step_size", trim_fd_step)
+        call jsonx_get(j_main, "initial.trim.solver.relaxation_factor", trim_r_factor)
+        call jsonx_get(j_main, "initial.trim.solver.tolerance", trim_tol)
+        call jsonx_get(j_main, "initial.trim.solver.max_iterations", trim_max_iter)
+    end subroutine init_to_trim
 
 
     subroutine mass_inertia()
@@ -728,7 +768,6 @@ contains
     end function trim_solver
 
 
-
     subroutine pseudo_aero(y)
         implicit none
 
@@ -897,7 +936,6 @@ contains
     end subroutine pseudo_aero
 
 
-
     function diff_eq(y) result(dydt)
         
         implicit none
@@ -1063,157 +1101,40 @@ contains
     end function rk4
 
 
-
-
-    subroutine run()
-        
-        implicit none
-        
-        real :: t
-        real, dimension(13) :: y, y1, y_init
-        real, dimension(14) :: s
-        real, dimension(3) :: eul
-        real, dimension(5) :: junk
-        integer :: ios
-        real :: time1, time2
-
-        call mass_inertia()
-        call std_atm_English(0.0, junk(1), junk(2), junk(3), rho0, junk(4), junk(5))
-
-        if (init_type == "state") then
-
-            y_init(1)  = V0*cos(alpha0)*cos(beta0)   ! u
-            y_init(2)  = V0*sin(beta0)               ! v
-            y_init(3)  = V0*sin(alpha0)*cos(beta0)   ! w
-            y_init(4)  = p0              ! p
-            y_init(5)  = q0              ! q
-            y_init(6)  = r0              ! r
-            y_init(7)  = 0.0             ! xf
-            y_init(8)  = 0.0             ! yf
-            y_init(9)  = zf0             ! zf
-            y_init(10) = phi0            ! phi
-            y_init(11) = theta0          ! theta
-            y_init(12) = psi0            ! psi
-
-            !  convert phi, theta, and psi to a quat
-            y_init(10:13) = euler_to_quat(y_init(10:12))
-
-            ! populate controls with initial values
-            controls(1) = da0
-            controls(2) = de0
-            controls(3) = dr0
-            controls(4) = tau0
-
-        else ! call trim solver
-            y_init = trim_solver()
-            trimming = .false.
-        end if
-        ! stop ! just for debugging trim
-        
-        !  normalize the quat
-        call quat_norm(y_init(10:13))
+    function vehicle_tick_state(t,time,dt) result(y1)
+        ! controls = controls_udp%recv()
+            
+        y1 = rk4(t, y, dt)
+        call quat_norm(y1(10:13))
+        y = y1
+        t = t + dt
+        integrated_time = integrated_time + dt
         
         if (verbose) then
+            write(*,*)
+            write(*, '(A, (1x,ES20.12))') "           time = ", t
+            write(*, '(A, 13(1x,ES20.12))')"          state  = ", y
             write(*,*) ""
-            write(*,*) "y_init = ", y_init
         end if
-        ! stop
-
-
-
-        t = t0
-        y = y_init
-        if (real_time) then
-            ! call cpu_time(time1)
-            ! call system_clock(time1, count_rate)
-            ! write(*,*) "count rate = ", count_rate
-            time1 = get_time()
-            write(*,*) "     time1 = ", time1
-            y1 = rk4(t,y, dt)
-            call quat_norm(y1(10:13))
-            ! call system_clock(time2)
-            time2 = get_time()
-            write(*,*) "     time2 = ", time2
-            ! dt = real(time2 - time2)/count_rate
-            dt = real(time2 - time1)
-            ! if (dt <= TOLERANCE) dt = 0.00001 / real(count_rate)
-            t = t0
-            y = y_init
-
-        end if 
-
-
-        ! Open output file (unit number 10 here, adjust as needed)
-        open(unit=10, file=trim(output_file), status="replace", action="write", iostat=ios)
-        if (ios /= 0) then
-            write(*,*) "Error opening file!"
-            stop
-        end if
-
-        write(10,'(15(1x,A20))') "time[s]", "dt[s]","u[ft/s]", "v[ft/s]", "w[ft/s]", "p[rad/s]", "q[rad/s]", "r[rad/s]", &
-        "xf[ft]", "yf[ft]", "zf[ft]", "e0", "ex", "ey", "ez"
-
+        
+        ! write to file
         write(10, '(15(1x,ES20.12))') t, dt, y(1:13)
 
+        ! send data to connection
+        s(1) = t
+        s(2:14) = y(1:13)
+        call graphics%send(s)
+
         if (real_time) then
-            ! call system_clock(cpu_start_time)
-            cpu_start_time = get_time()
-            time1 = cpu_start_time
-            integrated_time = 0.0
-        end if
-        
-        do while (t < tf)
-
-            ! controls = controls_udp%recv()
-            
-            y1 = rk4(t, y, dt)
-            call quat_norm(y1(10:13))
-            y = y1
-            t = t + dt
-            integrated_time = integrated_time + dt
-            
-            if (verbose) then
-                write(*,*)
-                write(*, '(A, (1x,ES20.12))') "           time = ", t
-                write(*, '(A, 13(1x,ES20.12))')"          state  = ", y
-                write(*,*) ""
-            end if
-            
-            ! write to file
-            write(10, '(15(1x,ES20.12))') t, dt, y(1:13)
-
-            ! send data to connection
-            s(1) = t
-            s(2:14) = y(1:13)
-            call graphics%send(s)
-
-            if (real_time) then
-                ! call system_clock(time2)
-                time2 = get_time()
-                dt = time2 - time1
-                ! dt = real(time2 - time1)/count_rate
-                ! if (dt <= TOLERANCE) dt = 0.00001 / real(count_rate)
-                time1 = time2
-            end if
-
-        end do 
-        
-        close(10)
-        
-        if (real_time) then
-            ! call system_clock(cpu_end_time)
-            cpu_end_time = get_time()
-            ! actual_time = real(cpu_end_time - cpu_start_time)/count_rate
-            actual_time = cpu_end_time - cpu_start_time
-            write(*,*) "       Integrated time[s] = ", integrated_time
-            write(*,*) "           Actual time[s] = ", actual_time
-            write(*,*) "  Total error in time [s] = ", integrated_time - actual_time
+            ! call system_clock(time2)
+            time2 = get_time()
+            dt = time2 - time1
+            ! dt = real(time2 - time1)/count_rate
+            ! if (dt <= TOLERANCE) dt = 0.00001 / real(count_rate)
+            time1 = time2
         end if
 
-    end subroutine
+    end function vehicle_tick_state
 
 
-    
-
-
-end module f16_m
+end module vehicle_m

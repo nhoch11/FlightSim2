@@ -64,7 +64,7 @@ contains
         ! p_array(7) = {101325.0, 22632.0491189944,5474.88167406511, 868.016875642432, 110.905974487888,59.0007483456162, 18.2100049756603 }; ! Pa
         ! T_prime(7) = {-0.0065, 0.0, 0.001, 0.0028, 0.0, -0.002, -0.004}; ! K/m
     
-    !  first layer
+        !  first layer
         if (Z <= 11000.0) then
             T = T_array(1) + T_prime(1)*(Z-Z_const(1)); !  K
             p = p_array(1)*(T/T_array(1))**(-GSSL/(RGAS*T_prime(1)))
@@ -170,7 +170,6 @@ contains
     end subroutine std_atm_English
 
 
-
     function gravity_SI(H) result(g)
         implicit none
         real, intent(in) :: H 
@@ -179,6 +178,7 @@ contains
         g = GSSL*(REZ/(REZ+H))**2
         
     end function gravity_SI
+
 
     function gravity_english(H) result(g)
     
@@ -189,6 +189,7 @@ contains
 
     end function gravity_english
 
+    
     function quat_mult(A, B) result(quat_result)
 
         implicit none
@@ -254,8 +255,8 @@ contains
     end subroutine quat_norm
 
 
-    ! euler angles in radians
     function euler_to_quat(euler) result(quat)
+        ! euler angles in radians
 
         implicit none
 
@@ -321,7 +322,6 @@ contains
 
 
     end function
-
 
 
 end module hoch_m 

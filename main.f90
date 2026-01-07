@@ -1,6 +1,6 @@
 program main
     
-    use f16_m
+    use sim_m
     use udp_m, only: udp_initialize, udp_finalize
     ! use f16_566_m
 

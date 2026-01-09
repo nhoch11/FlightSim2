@@ -32,6 +32,7 @@ contains
         end if 
         call jsonx_get(j_main, "simulation.total_time[s]", tf)
         call jsonx_get(j_main, "simulation.verbose", verbose, .false.)
+        call jsonx_get(j_main, "simulation.verbose2", verbose2, .false.)
 
         ! initialize each vehicle
         do i=1,num_vehicles

@@ -15,8 +15,7 @@ program main
     ! Start timer
     call system_clock(start_count, count_rate)
 
-    ! call init("7.2.2.B.json")
-    call init("test_connection.json")
+    call init("input_physics.json")
     call run()
     
 
@@ -26,7 +25,7 @@ program main
     
         ! Goodbye
     write(*,*)
-    write(*,'(a, f10.4, a)') " f16 exited successfully. Execution time: ", runtime, " s"
+    write(*,'(a, f10.4, a)') " sim exited successfully. Execution time: ", runtime, " s"
     
 
     ! set down

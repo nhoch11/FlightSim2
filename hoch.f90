@@ -180,14 +180,14 @@ contains
     end function gravity_SI
 
 
-    function gravity_english(H) result(g)
+    function gravity_English(H) result(g)
     
         implicit none
         real, intent(in) :: H
         real :: g
         g = gravity_SI(0.3048*H)/0.3048
 
-    end function gravity_english
+    end function gravity_English
 
     
     function quat_mult(A, B) result(quat_result)

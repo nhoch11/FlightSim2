@@ -9,7 +9,7 @@ module vehicle_m
     implicit none
 
     type stall_settings_t
-
+        real :: alpha_0, alpha_s, lambda_b, minval 
     end type stall_settings_t
 
     type trim_settings_t
@@ -18,21 +18,21 @@ module vehicle_m
         character(:), allocatable :: init_type, trim_type
         real :: trim_fd_step, trim_r_factor, trim_tol, u_trim, v_trim, w_trim, p_trim, q_trim, r_trim, sideslip0, gamma0
         integer :: trim_max_iter
-        logical :: trimming
-    end type trim_settings_t
-
-    type vehicle_t
-
+        end type trim_settings_t
+        
+        type vehicle_t
+        
         type(json_value), pointer :: j_vehicle
-
+        
         character(len=:), allocatable :: name
         character(len=:), allocatable :: type
         character(100) :: states_filename, rk4_filename
-
+        
         logical :: run_physics
         logical :: save_states
         logical :: iunit_states, iunit_rk4, iunit_trim
         logical :: verbose, verbose2
+        logical :: trimming
 
         ! mass constants
         real :: weight, mass
@@ -46,24 +46,24 @@ module vehicle_m
         real :: CL0, CLa, CLahat, CLqbar, CLde
         real :: CD0, CD1, CD2, CDS2, CDqbar, CDaqbar, CDde, CDade, CDde2
         real :: CSb, CSpbar, CSapbar, CSrbar, CSda, CSdr
-        real :: Clb, Clpbar, Clrbar, Clarbar, Clda, Cldr
+        real :: Cll0, Cl1, Clb, Clpbar, Clrbar, Clarbar, Clda, Cldr
         real :: Cm0, Cma, Cmqbar, Cmahat, Cmde
         real :: Cnb, Cnpbar, Cnapbar, Cnrbar, Cnda, Cnada, Cndr
-        real :: Throt_0, Throt_a
+        
         
         ! stall model constants
         logical :: include stall
-        type(stall_settings_t) :: CLstall, CDstall, Cmstall
+        type(stall_settings_t) :: CL_stall, CD_stall, Cm_stall
+
+        ! thrust
+        real :: thrust_T0, thrust_Ta
+        real, dimension(:), allocatable :: thrust_loc
+        real, dimension(4) :: thrust_quat
 
         ! intitialization constants
-        real, dimension(:), allocatable :: eul0
+        real, dimension(:), allocatable :: init_eul
         real, dimension(13) :: init_state
-        real :: V0, zf0
-
-        ! old init constants
-        real :: phi0, theta0, psi0, p0, q0, r0
-        real :: alpha0, beta0, da0, de0, dr0, tau0, rho0
-
+        real :: init_V, init_alt
 
         ! variables
         real, dimension(13) :: states
@@ -78,171 +78,295 @@ module vehicle_m
 
     end type vehicle_t
         
+
+    ! ! snippet of code for creating output file name
+    ! logical :: found
+    ! integer :: dot_pos
+    ! character(len=256) :: base_name
+    ! ! Find position of ".json" (or last dot)
+    ! dot_pos = index(input_file, ".json")
+    
+    ! if (dot_pos > 0) then
+    !     base_name = input_file(1:dot_pos-1)
+    ! else
+    !     base_name = input_file   ! fallback if no .json found
+    ! end if
+    
+    ! ! Build the output filename
+    ! output_file = trim(base_name)//"_output.txt"
         
 
 contains 
 
-    subroutine vehicle_init(input_file)
+    subroutine vehicle_init(this, input_file)
         implicit none
-        character(len=*), intent(in) :: input_file
-        type(json_value), pointer :: j_main
-        type(json_value), pointer :: j_connections, j_graphics
-        logical :: found
-        integer :: dot_pos
-        character(len=256) :: base_name
+        type(vehicle_t) :: this 
+        type(json_value), pointer :: j_vehicle_input
+        real, dimension(:), allocatable :: thrust_orientation, hxyz
+        real :: det
 
-        ! Find position of ".json" (or last dot)
-        dot_pos = index(input_file, ".json")
+        this%j_vehicle => j_vehicle_input
+        this%name = this%j_vehicle%name
 
-        if (dot_pos > 0) then
-            base_name = input_file(1:dot_pos-1)
-        else
-            base_name = input_file   ! fallback if no .json found
-        end if
-
-        ! Build the output filename
-        output_file = trim(base_name)//"_output.txt"
+        call jsonx_get(this%j_vehicle, "type", this%type)
+        call jsonx_get(this%j_vehicle, "run_physics", this%run_physics)
         
-        call jsonx_load(input_file,j_main)
+        write(*,*) "Initializing ", this%name
+        write(*,*) "    - type = ", this%type
+        write(*,*) "    - run physics = ", this%run_physics
         
-        call jsonx_get(j_main, "simulation.time_step[s]", dt, 0.0)
-        if (abs(dt) <= TOLERANCE) then
-            real_time = .true.
-        else 
-            real_time = .false.
-        end if 
-        call jsonx_get(j_main, "simulation.total_time[s]", tf)
-        call jsonx_get(j_main, "simulation.verbose", verbose, .false.)
-        call jsonx_get(j_main, "simulation.verbose2", verbose2, .false.)
-        
-        ! call json_xtnsn_get(mass_settings, "mass_slug",  mass)
-        call jsonx_get(j_main, "vehicle.mass.weight[lbf]",  weight)
-        call jsonx_get(j_main, "vehicle.mass.Ixx[slug-ft^2]",  Ixx0)
-        call jsonx_get(j_main, "vehicle.mass.Iyy[slug-ft^2]",  Iyy0)
-        call jsonx_get(j_main, "vehicle.mass.Izz[slug-ft^2]",  Izz0)
-        call jsonx_get(j_main, "vehicle.mass.Ixy[slug-ft^2]",  Ixy0)
-        call jsonx_get(j_main, "vehicle.mass.Ixz[slug-ft^2]",  Ixz0)
-        call jsonx_get(j_main, "vehicle.mass.Iyz[slug-ft^2]",  Iyz0)
-        call jsonx_get(j_main, "vehicle.mass.hx[slug-ft^2/s]",  hx0)
-        call jsonx_get(j_main, "vehicle.mass.hy[slug-ft^2/s]",  hy0)
-        call jsonx_get(j_main, "vehicle.mass.hz[slug-ft^2/s]",  hz0)
+        if (this%run_physics) then 
+                if (save_states) then
+                this%states_filename = trim(this%name)//"_states.csv"
+                open(newunit=this%iunit_states, file=this%states_filename, status="REPLACE")
+                write(this%iunit_states,*) = "time[s],u[ft/s],v[ft/s],w[ft/s],p[rad/s],q[rad/s],r[rad/s],x[ft],y[ft],z[ft],e0,ex,ey,ez"
+                write(*,*) "    - states will be written to ", this%states_filename
+            end if 
+            
+            if (rk4_verbose) then
+                this%rk4_filename = trim(this%name)//"_RK4.csv"
+                open(newunit=this%iunit_rk4, file=this%rk4_filename, status="REPLACE")
+                write(*,*) "    - RK4 results will be written to ", this%states_filename
+            end if
+            
+            write(*,*) "    - mass"
+            call jsonx_get(this%j_vehicle, "mass.weight[lbf]",  this%weight)
+            call jsonx_get(this%j_vehicle, "mass.Ixx[slug-ft^2]",  this%I(1,1))
+            call jsonx_get(this%j_vehicle, "mass.Iyy[slug-ft^2]",  this%I(2,2))
+            call jsonx_get(this%j_vehicle, "mass.Izz[slug-ft^2]",  this%I(3,3))
+            call jsonx_get(this%j_vehicle, "mass.Ixy[slug-ft^2]",  this%I(1,2), 0.0)
+            call jsonx_get(this%j_vehicle, "mass.Ixz[slug-ft^2]",  this%I(1,3), 0.0)
+            call jsonx_get(this%j_vehicle, "mass.Iyz[slug-ft^2]",  this%I(2,3), 0.0)
+            
+            ! calc mass
+            this%mass = this%weight/gravity_English(0.0)
+            write(*,*) "        - weight[lbf] = ", this%mass
+            write(*,*) "        - mass[slug]  = ", this%mass
+            
+            this%I(1,2) = -this%I(1,2)
+            this%I(1,3) = -this%I(1,3)
+            this%I(2,1) =  this%I(1,2) ! this is negative at this point
+            this%I(2,3) = -this%I(2,3)
+            this%I(3,1) =  this%I(1,3) ! this is negative at this point
+            this%I(3,2) =  this%I(2,3) ! this is negative at this point
+            
+            ! calculate I_inv by hand
+            det = this%I(1,1)*(this%I(2,2)*this%I(3,3) - this%I(2,3)*this%I(3,2)) &
+                - this%I(1,2)*(this%I(2,1)*this%I(3,3) - this%I(2,3)*this%I(3,1)) &
+                + this%I(1,3)*(this%I(2,1)*this%I(3,2) - this%I(2,2)*this%I(3,1))
+                
+            if (det < 0) then
+                ! The matrix is singular, cannot be inverted
+                write(*,*) "Singular inertia matrix.... quitting"
+                stop
+            end if
+            
+            this%I_inv(1,1) = (this%I(2,2)*this%I(3,3) - this%I(2,3)*this%I(3,2)) / det;
+            this%I_inv(1,2) = (this%I(1,3)*this%I(3,2) - this%I(1,2)*this%I(3,3)) / det;
+            this%I_inv(1,3) = (this%I(1,2)*this%I(2,3) - this%I(1,3)*this%I(2,2)) / det;
+            this%I_inv(2,1) = (this%I(2,3)*this%I(3,1) - this%I(2,1)*this%I(3,3)) / det;
+            this%I_inv(2,2) = (this%I(1,1)*this%I(3,3) - this%I(1,3)*this%I(3,1)) / det;
+            this%I_inv(2,3) = (this%I(1,1)*this%I(2,3) - this%I(1,3)*this%I(2,1)) / det;
+            this%I_inv(3,1) = (this%I(2,1)*this%I(3,2) - this%I(2,2)*this%I(3,1)) / det;
+            this%I_inv(3,2) = (this%I(1,2)*this%I(3,1) - this%I(1,1)*this%I(3,2)) / det;
+            this%I_inv(3,3) = (this%I(1,1)*this%I(2,2) - this%I(1,2)*this%I(2,1)) / det;
+            
+            
+            call jsonx_get(this%j_vehicle, "mass.hx[slug-ft^2/s]",  hxyz, 0.0, 3)
+            
+            this%h = 0.
+            this%h(1,2) = -hxyz(3)
+            this%h(1,3) =  hxyz(2)
+            this%h(2,1) =  hxyz(3)
+            this%h(2,3) = -hxyz(1)
+            this%h(3,1) = -hxyz(2)
+            this%h(3,2) =  hxyz(1)
+            
+            if (this%verbose) then
+                write(*,*) "        - I matrix = ", this%I
+                write(*,*) "        - I_inv    = ", this%I_inv
+                write(*,*) "        - h matrix = ", this%h
+            end if
+            
+            
+            write(*,*) "    - aerodynamics"
+            call jsonx_get(this%j_vehicle, "aerodynamics.reference.area[ft^2]",  this%ref_area)
+            call jsonx_get(this%j_vehicle, "aerodynamics.reference.longitudinal_length[ft]",  this%ref_long)
+            call jsonx_get(this%j_vehicle, "aerodynamics.reference.lateral_length[ft]",  this%ref_lat)
+            call jsonx_get(this%j_vehicle, "aerodynamics.reference.relative_location[ft]",  this%aero_ref_loc, 0.0, 3)
+            
+            if (this%type == "arrow") 
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.alpha", this%CLa)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.L0", this%CD0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.CL1_CL1", this%CD2)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.0", this%Cll0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.1", this%Cl1)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.pbar", this%Clpbar)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.alpha", this%Cma)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.qbar", this%Cmqbar)
+            end if
+            
+            if (this%type == "aircraft") then
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.0", this%CL0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.alpha", this%CLa)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.alphahat", this%CLahat)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.qbar", this%CLqbar)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.elevator", this%CLde)
+                
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.beta", this%CSb)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.pbar", this%CSpbar)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.alpha_pbar", this%CSapbar)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.rbar", this%CSrbar)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.aileron", this%CSda)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.rudder", this%CSdr)
+                
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.L0", this%CD0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.CL1", this%CD1)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.CL1_CL1", this%CD2)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.CS_CS", this%CDS2)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.qbar", CDqbar)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.alpha_qbar", CDaqbar)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.elevator", CDde)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.alpha_elevator", CDade)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.elevator_elevator", CDde2)
+                
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.beta", Clb)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.pbar", Clpbar)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.rbar", Clrbar)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.alpha_rbar", Clarbar)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.aileron", Clda)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.rudder", Cldr)
+                
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.0", Cm0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.alpha", Cma)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.qbar", Cmqbar)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.alphahat", Cmahat)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.elevator", Cmde)
+                
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.beta", Cnb)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.pbar", Cnpbar)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.alpha_pbar", Cnapbar)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.rbar", Cnrbar)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.aileron", Cnda)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.alpha_aileron", Cnada)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.rudder", Cndr)
+            end if
 
-        call jsonx_get(j_main, "vehicle.thrust.T0[lbf]",  Throt_0)
-        call jsonx_get(j_main, "vehicle.thrust.a",  Throt_a)
+            ! stall
+            if (this%type == "arrow" .or. this%type == "aircraft") then
+                call jsonx_get(this%vehicle, "aerodynamics.stall.include_stall", this%include_stall)
+                if (this%include_stall) then
+                    ! CL stall
+                    call jsonx_get(this%vehicle, "aerodynamics.stall.CL.alpha_0[deg]", this%CL_stall%alpha_0)
+                    this%CL_stall%alpha_0 = this%CL_stall%alpha_0*PI/180.0
+                    call jsonx_get(this%vehicle, "aerodynamics.stall.CL.alpha_s[deg]", this%CL_stall%alpha_s)
+                    this%CL_stall%alpha_s = this%CL_stall%alpha_s*PI/180.0
+                    call jsonx_get(this%vehicle, "aerodynamics.stall.CL.lambda_b", this%CL_stall%lambda_b)
+                    
+                    ! CD stall
+                    call jsonx_get(this%vehicle, "aerodynamics.stall.CD.alpha_0[deg]", this%CD_stall%alpha_0)
+                    this%CD_stall%alpha_0 = this%CD_stall%alpha_0*PI/180.0
+                    call jsonx_get(this%vehicle, "aerodynamics.stall.CD.alpha_s[deg]", this%CD_stall%alpha_s)
+                    this%CD_stall%alpha_s = this%CD_stall%alpha_s*PI/180.0
+                    call jsonx_get(this%vehicle, "aerodynamics.stall.CD.lambda_b", this%CD_stall%lambda_b)
+                    
+                    ! Cm stall
+                    call jsonx_get(this%vehicle, "aerodynamics.stall.Cm.min", this%Cm_stall%min_val)
+                    call jsonx_get(this%vehicle, "aerodynamics.stall.Cm.alpha_0[deg]", this%Cm_stall%alpha_0)
+                    this%Cm_stall%alpha_0 = this%Cm_stall%alpha_0*PI/180.0
+                    call jsonx_get(this%vehicle, "aerodynamics.stall.Cm.alpha_s[deg]", this%Cm_stall%alpha_s)
+                    this%Cm_stall%alpha_s = this%Cm_stall%alpha_s*PI/180.0
+                    call jsonx_get(this%vehicle, "aerodynamics.stall.Cm.lambda_b", this%Cm_stall%lambda_b)
+                end if
+            end if
+            
+            call jsonx_get(this%vehicle, "thrust.T0[lbf]", this%thrust_T0)
+            call jsonx_get(this%vehicle, "thrust.Ta", this%thrust_Ta)
+            call jsonx_get(this%vehicle, "thrust.locationp[ft]", this%thrust_loc, 0.0, 3)
+            call jsonx_get(this%vehicle, "thrust.locationp[ft]", thrust_orientation, 0.0, 3)
+            thrust_orientation = thrst_orientation*PI/180.0
+            this%thrust_quat = euler_to_quat(thrust_orientation)
 
-        call jsonx_get(j_main, "vehicle.aerodynamics.reference.area[ft^2]",  ref_area)
-        call jsonx_get(j_main, "vehicle.aerodynamics.reference.longitudinal_length[ft]",  ref_long)
-        call jsonx_get(j_main, "vehicle.aerodynamics.reference.lateral_length[ft]",  ref_lat)
-        call jsonx_get(j_main, "vehicle.aerodynamics.reference.relative_location[ft]",  aero_ref_loc, 0.0, 3)
-        
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CL.0", CL0)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CL.alpha", CLa)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CL.alphahat", CLahat)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CL.qbar", CLqbar)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CL.elevator", CLde)
 
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CS.beta", CSb)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CS.pbar", CSpbar)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CS.alpha_pbar", CSapbar)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CS.rbar", CSrbar)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CS.aileron", CSda)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CS.rudder", CSdr)
+            ! initial conditions
+            this%init_state = 0.
+            this%controls
 
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CD.L0", CD0)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CD.CL1", CD1)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CD.CL1_CL1", CD2)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CD.CS_CS", CDS2)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CD.qbar", CDqbar)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CD.alpha_qbar", CDaqbar)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CD.elevator", CDde)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CD.alpha_elevator", CDade)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.CD.elevator_elevator", CDde2)
-        
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cl.beta", Clb)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cl.pbar", Clpbar)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cl.rbar", Clrbar)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cl.alpha_rbar", Clarbar)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cl.aileron", Clda)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cl.rudder", Cldr)
-        
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cm.0", Cm0)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cm.alpha", Cma)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cm.qbar", Cmqbar)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cm.alphahat", Cmahat)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cm.elevator", Cmde)
+            call jsonx_get(this%j_vehicle, "initial.airspeed[ft/s]",  this%init_V)
+            call jsonx_get(this%j_vehicle, "initial.altitude[ft]",  this%init_alt)
+            this%init_state(9) = -this%init_alt
+            call jsonx_get(this%j_vehicle, "initial.latitude[deg]",  this%lat)
+            this%lat = this%lat*PI/180.0
+            call jsonx_get(this%j_vehicle, "initial.longitude[deg]",  this%long)
+            this%long = this%long*PI/180.0
+            call jsonx_get(this%j_vehicle, "initial.Euler_angles[deg]",  this%init_eul, 0.0, 3)
+            this%init_eul = this%init_eul*PI/180.0
+          
 
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cn.beta", Cnb)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cn.pbar", Cnpbar)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cn.alpha_pbar", Cnapbar)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cn.rbar", Cnrbar)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cn.aileron", Cnda)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cn.alpha_aileron", Cnada)
-        call jsonx_get(j_main, "vehicle.aerodynamics.coefficients.Cn.rudder", Cndr)
+            call jsonx_get(j_main, "initial.type", this%init_type)
+            
+            if (this%init_type == "state") then
+                call init_to_state(this)
+            else if (this%init_type == "trim") then
+                call init_to_trim(this)
+            else
+                write(*,*) " Invalid initial type in json. must be trim or state. Quitting..."
+                stop
+            end if
 
-        call jsonx_get(j_main, "initial.airspeed[ft/s]",  V0)
-        call jsonx_get(j_main, "initial.altitude[ft]",  zf0)
-        zf0 = -1.*zf0
+            this%init_state(10:13) = euler_to_quat(this%init_eul)
+            this%state = this%init_state
 
-        call jsonx_get(j_main, "initial.type", init_type)
+            if (this%save_states) then
+                call vehicle_write_state(this, 0.0, this%state)
+            end if
 
-        if (init_type == "state") then
-            call init_to_state(t)
-        else if (init_type == "trim") then
-            call init_to_trim(t)
-        else
-            write(*,*) " Invalid initial type in json. must be trim or state. Quitting..."
-            stop
-        end if
-     
-        
-        Vwf(1) = 0.
-        Vwf(2) = 0.
-        Vwf(3) = 0.
-        !  print results in a file
-        ! FILE* en_file = fopen("cannonball.txt", "w");
-        ! fprintf(en_file, "  Time[s]              u[ft/s]            v[ft/s]                w[ft/s]              p[rad/s]             q[rad/s]             r[rad/s]             x[ft]                y[ft]                z[ft]                e0                   ex                   ey                   ez\n");
-    
+        end if ! run_physics
 
         ! connections
-        call jsonx_get(j_main, "connections", j_connections)
-        call jsonx_get(j_connections, "graphics", j_graphics)
-        call graphics%init(j_graphics)
+        ! call jsonx_get(j_main, "connections", j_connections)
+        ! call jsonx_get(j_connections, "graphics", j_graphics)
+        ! call graphics%init(j_graphics)
+
     end subroutine vehicle_init
 
 
-    subroutine init_to_state(t)
-        trimming = .false.
-        call jsonx_get(j_main, "initial.state.alpha[deg]", alpha0)
-        call jsonx_get(j_main, "initial.state.beta[deg]", beta0)
-        alpha0 = alpha0*pi/180.
-        beta0 = beta0*pi/180.
-        write(*,*) "beta0 rad = ", beta0
+    subroutine init_to_state(this)
 
-        call jsonx_get(j_main, "initial.state.bank_angle[deg]", phi0)
-        call jsonx_get(j_main, "initial.state.elevation_angle[deg]", theta0)
-        call jsonx_get(j_main, "initial.state.heading_angle[deg]", psi0)
-        phi0 = phi0*pi/180.
-        theta0 = theta0*pi/180.
-        psi0 = psi0*pi/180.
+        implicit none
+        real :: p0, q0, r0
+        real :: alpha0, beta0, da0, de0, dr0, tau0, rho0
+
+        this%trimming = .false.
+
+        call jsonx_get(this%j_vehicle, "initial.state.angle_of_attack[deg]", alpha0)
+        call jsonx_get(this%j_vehicle, "initial.state.sideslip_angle[deg]", beta0)
+        alpha0 = alpha0*PI/180.
+        beta0 = beta0*PI/180.
+
+        this%init_state(1)  = this%init_V*cos(alpha0)*cos(beta0)   ! u
+        this%init_state(2)  = this%init_V*sin(beta0)               ! v
+        this%init_state(3)  = this%init_V*sin(alpha0)*cos(beta0)   ! w
+
+        call jsonx_get(this%j_vehicle, "initial.state.p[deg/s]",  this%init_state(4))
+        call jsonx_get(this%j_vehicle, "initial.state.q[deg/s]",  this%init_state(5))
+        call jsonx_get(this%j_vehicle, "initial.state.r[deg/s]",  this%init_state(6))
+        this%init_state(4) = this%init_state(4)*PI/180. ! p
+        this%init_state(5) = this%init_state(5)*PI/180. ! q
+        this%init_state(6) = this%init_state(6)*PI/180. ! r
         
-        call jsonx_get(j_main, "initial.state.p[deg/s]",  p0)
-        call jsonx_get(j_main, "initial.state.q[deg/s]",  q0)
-        call jsonx_get(j_main, "initial.state.r[deg/s]",  r0)
-        p0 = p0*pi/180.
-        q0 = q0*pi/180.
-        r0 = r0*pi/180.
-        
-        call jsonx_get(j_main, "initial.state.aileron[deg]",  da0)
-        call jsonx_get(j_main, "initial.state.elevator[deg]",  de0)
-        call jsonx_get(j_main, "initial.state.rudder[deg]",  dr0)
-        call jsonx_get(j_main, "initial.state.throttle",  tau0)
-        da0 = da0*pi/180.
-        de0 = de0*pi/180.
-        dr0 = dr0*pi/180.
+        call jsonx_get(this%j_vehicle, "initial.state.aileron[deg]",  this%controls(1))
+        call jsonx_get(this%j_vehicle, "initial.state.elevator[deg]",  this%controls(2))
+        call jsonx_get(this%j_vehicle, "initial.state.rudder[deg]",  this%controls(3))
+        call jsonx_get(this%j_vehicle, "initial.state.throttle",  tthis%controls(4))
+        this%controls(1) = this%controls(1)*PI/180. ! da
+        this%controls(2) = this%controls(2)*PI/180. ! de    
+        this%controls(3) = this%controls(3)*PI/180. ! dr
+
     end subroutine init_to_state
 
 
-    subroutine init_to_trim(t)
+    subroutine init_to_trim(this)
         trimming = .true.
         call jsonx_get(j_main, "initial.trim.type", trim_type)
 
@@ -274,73 +398,6 @@ contains
         call jsonx_get(j_main, "initial.trim.solver.tolerance", trim_tol)
         call jsonx_get(j_main, "initial.trim.solver.max_iterations", trim_max_iter)
     end subroutine init_to_trim
-
-
-    subroutine mass_inertia()
-        implicit none
-
-        real :: det
-
-
-        ! calc mass
-        ! r = ref_length/2.
-        mass = weight*.3048/GSSL
-        if (verbose2 .and. .not. trimming) then
-            write(*,*) "mass = ", mass
-        end if
-
-        ! Ixxyyzz = mass*2.*(r**5 - (r-0.00131)**5)/(5.*(r**3 - (r-0.00131)**3))
-        h = 0.
-        h(1,2) = -hz0
-        h(1,3) =  hy0
-        h(2,1) =  hz0
-        h(2,3) = -hx0
-        h(3,1) = -hy0
-        h(3,2) =  hx0
-
-        I(1,1) =  Ixx0
-        I(2,2) =  Iyy0
-        I(3,3) =  Izz0
-        
-        I(1,2) = -Ixy0
-        I(1,3) = -Ixz0
-        I(2,1) = -Ixy0
-        I(2,3) = -Iyz0
-        I(3,1) = -Ixz0
-        I(3,2) = -Iyz0
-
-
-        ! calculate I_inv by hand
-
-        det = I(1,1)*(I(2,2)*I(3,3) - I(2,3)*I(3,2)) &
-            - I(1,2)*(I(2,1)*I(3,3) - I(2,3)*I(3,1)) &
-            + I(1,3)*(I(2,1)*I(3,2) - I(2,2)*I(3,1))
-        write(*,*) "denom = ", det
-
-        if (det < 0) then
-            ! The matrix is singular, cannot be inverted
-            write(*,*) "Singular inertia matrix.... quitting"
-            stop
-        end if
-
-        I_inv(1,1) = (I(2,2)*I(3,3) - I(2,3)*I(3,2)) / det;
-        I_inv(1,2) = (I(1,3)*I(3,2) - I(1,2)*I(3,3)) / det;
-        I_inv(1,3) = (I(1,2)*I(2,3) - I(1,3)*I(2,2)) / det;
-        I_inv(2,1) = (I(2,3)*I(3,1) - I(2,1)*I(3,3)) / det;
-        I_inv(2,2) = (I(1,1)*I(3,3) - I(1,3)*I(3,1)) / det;
-        I_inv(2,3) = (I(1,1)*I(2,3) - I(1,3)*I(2,1)) / det;
-        I_inv(3,1) = (I(2,1)*I(3,2) - I(2,2)*I(3,1)) / det;
-        I_inv(3,2) = (I(1,2)*I(3,1) - I(1,1)*I(3,2)) / det;
-        I_inv(3,3) = (I(1,1)*I(2,2) - I(1,2)*I(2,1)) / det;
-
-        if (verbose2 .and. .not. trimming) then
-            write(*,*) "I matrix", I
-            write(*,*) "I_inv = ", I_inv
-            write(*,*) "h matrix = ", h
-        end if
-       
-        return
-    end subroutine mass_inertia
 
 
     function calc_R(p,q,r, theta, G) result(R_)
@@ -1101,7 +1158,7 @@ contains
     end function rk4
 
 
-    function vehicle_tick_state(t,time,dt) result(y1)
+    subroutine vehicle_tick_state(this, time, dt)
         ! controls = controls_udp%recv()
             
         y1 = rk4(t, y, dt)
@@ -1133,8 +1190,11 @@ contains
             ! if (dt <= TOLERANCE) dt = 0.00001 / real(count_rate)
             time1 = time2
         end if
+    
+    end subroutine vehicle_tick_state
 
-    end function vehicle_tick_state
 
+    subroutine vehicle_write_state(this, time, y)
+    end subroutine vehicle_write_state
 
 end module vehicle_m

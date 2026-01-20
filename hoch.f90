@@ -1,6 +1,9 @@
 module hoch_m
 
     implicit none
+
+    logical :: save_states, verbose, verbose2, rk4_verbose, gravity_relief
+    real :: gravity_relief_factor
     
     real, parameter :: PI = 3.1415926535897932384626433832795
     real, parameter :: TOLERANCE = 1.0e-14
@@ -127,7 +130,7 @@ contains
             p = p_array(8)*exp((-GSSL*(Z-Z_const(8)))/(RGAS*T_array(8)))
             
         else
-            write(*,*) "std_atm_si error, out of atmosphere"
+            write(*,*) "Z = ", Z, "std_atm_si error, out of atmosphere"
         end if
         rho = p/(RGAS*T);
 

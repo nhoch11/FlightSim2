@@ -43,6 +43,19 @@ module sim_m
             gravity_relief_factor = 0.0
         end if
         
+        call jsonx_get(j_main, "simulation.geographic_model", geographic_model, "none")
+        geographic_model_ID = 0
+        if (geographic_model == "sphere") geographic_model_ID = 1
+        if (geographic_model == "ellipse") geographic_model_ID = 2
+
+        if (geographic_model_ID > 0) then
+            headers = [character(len=20) :: &
+             headers, &
+             " latitude[deg]", &
+             " longitude[deg]", &
+             " azimuth[deg]"]
+        end if
+
         write(*,*) "Initializing Vehicles..."
         call jsonx_get(j_main, "vehicles", j_vehicles)
         num_vehicles = json_value_count(j_vehicles)
@@ -53,7 +66,7 @@ module sim_m
             call json_value_get(j_vehicles, i, j_temp)
             call vehicle_init(vehicles(i), j_temp)
         end do
-        
+        write(*,*)"" 
         write(*,*) "Initialization Complete"
 
     end subroutine
@@ -111,7 +124,11 @@ module sim_m
             write(*,'(*(A20))') "vehicle name", headers
             do i=1,num_vehicles
                 if (vehicles(i)%run_physics) then
-                    write(*,'(A20, *(ES20.12))') vehicles(i)%name, time, dt, vehicles(i)%state(:)
+                    write(*,'(A19, *(ES20.12))', advance='no') vehicles(i)%name, time, dt, vehicles(i)%state(:)
+                    if (geographic_model_ID>0) then
+                        write(*,'(*(ES20.12))', advance='no') vehicles(i)%latitude_deg, vehicles(i)%longitude_deg, vehicles(i)%azimuth_deg
+                    end if
+                    write(*,*) "" 
                 end if
             end do
         end if
@@ -135,7 +152,11 @@ module sim_m
             if (verbose) then
                 do i=1,num_vehicles
                     if (vehicles(i)%run_physics) then
-                        write(*,'(A20, *(ES20.12))') vehicles(i)%name, time, dt, vehicles(i)%state(:)
+                        write(*,'(A19, *(ES20.12))', advance='no') vehicles(i)%name, time, dt, vehicles(i)%state(:)
+                        if (geographic_model_ID>0) then
+                            write(*,'(*(ES20.12))', advance='no') vehicles(i)%latitude_deg, vehicles(i)%longitude_deg, vehicles(i)%azimuth_deg
+                        end if
+                        write(*,*) "" 
                     end if
                 end do
             end if

@@ -1,12 +1,12 @@
 {
     "simulation" : {
         "time_step[s]" : 0.01,
-        "end_time[s]" : 5.0,
+        "end_time[s]" : 0.02,
         "gravity_relief": true,
         "save_states" : false,
         "verbose" : true,
         "verbose2" : false,
-        "rk4_verbose" : false
+        "rk4_verbose" : true
     },
     "vehicles" : {
         "ping-pong-ball" : {
@@ -44,7 +44,7 @@
         },
         "arrow" : {
             "type" : "arrow",
-            "run_physics" : false,
+            "run_physics" : true,
             "mass" : {
                 "weight[lbf]" : 0.0697,
                 "Ixx[slug-ft^2]" : 0.0000194,
@@ -98,7 +98,7 @@
         },
         "F16" : {
             "type" : "aircraft",
-            "run_physics" : true,
+            "run_physics" : false,
             "mass" : {
                 "weight[lbf]" : 20500.0,
                 "Ixx[slug-ft^2]" : 9496.0,

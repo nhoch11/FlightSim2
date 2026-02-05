@@ -1,12 +1,9 @@
 module hoch_m
 
     implicit none
-
-    logical :: save_states, verbose, verbose2, rk4_verbose, gravity_relief
-    real :: gravity_relief_factor
-    
+ 
     real, parameter :: PI = 3.1415926535897932384626433832795
-    real, parameter :: TOLERANCE = 1.0e-14
+    real, parameter :: TOLERANCE = 1.0e-13
     real, parameter :: REZ = 6356766.0 ! [m] radius of Earth used to compute geopotential altitude
     real, parameter :: RE = 6366707.01949371 ! [m] mean sea-level radius of the Earth
     real, parameter :: GSSL = 9.80665 ! [m/s^2] gravity at sea level

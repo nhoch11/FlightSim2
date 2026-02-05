@@ -8,19 +8,22 @@ module vehicle_m
     
     implicit none
 
+    logical :: save_states, verbose, verbose2, rk4_verbose, gravity_relief
+    real :: gravity_relief_factor
+    integer :: geographic_model_ID
+    character(len=:), allocatable :: geographic_model
+
     type stall_settings_type
         real :: alpha_0, alpha_s, lambda_b, min_val 
     end type stall_settings_type
 
     type trim_settings_type
         ! old trim settings
-        logical :: has_sideslip, has_gamma, verbose
+        logical :: solve_for_sideslip, solve_for_fixed_climb_angle, solve_for_relative_climb_angle, solve_for_load_factor, verbose
+        logical, allocatable, dimension(:) :: free_vars
         character(:), allocatable :: type
-        real :: fd_step, r_factor, tol
-        integer :: max_iter
-        real :: sideslip0, gamma0
+        real :: sideslip, climb_angle, load_factor
         real :: u, v, w, p, q, r
-        real :: phi0, theta0, psi0
     end type trim_settings_type
         
     type vehicle_type
@@ -71,7 +74,7 @@ module vehicle_m
         ! variables
         real, dimension(13) :: state
         real, dimension(4) :: controls
-        real :: lat, long
+        real :: latitude, longitude, latitude_deg, longitude_deg, azimuth_deg
 
         type(trim_settings_type) :: trim
 
@@ -201,27 +204,12 @@ contains
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.qbar", this%CLqbar)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.elevator", this%CLde)
                 
-                ! write(*,*) ""
-                ! write(*,*) "    CL 0 = ", this%CL0
-                ! write(*,*) "    CL a = ", this%CLa
-                ! write(*,*) "    CL ahat = ", this%CLahat
-                ! write(*,*) "    CL qbar = ", this%CLqbar
-                ! write(*,*) "    CL de = ", this%CLde
-                
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.beta", this%CSb)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.pbar", this%CSpbar)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.alpha_pbar", this%CSapbar)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.rbar", this%CSrbar)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.aileron", this%CSda)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.rudder", this%CSdr)
-                
-                ! write(*,*) ""
-                ! write(*,*) "    CS beta = ", this%CSb
-                ! write(*,*) "    CS pbar = ", this%CSpbar
-                ! write(*,*) "    CS apbar = ", this%CSapbar
-                ! write(*,*) "    CS rbar = ", this%CSrbar
-                ! write(*,*) "    CS da = ", this%CSda
-                ! write(*,*) "    CS dr = ", this%CSdr
                 
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.L0", this%CD0)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.CL1", this%CD1)
@@ -233,17 +221,6 @@ contains
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.alpha_elevator", this%CDade)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.elevator_elevator", this%CDde2)
                 
-                ! write(*,*) ""
-                ! write(*,*) "    CD L0 = ", this%CD0
-                ! write(*,*) "    CD CL1 = ", this%CD1
-                ! write(*,*) "    CD CL2 = ", this%CD2
-                ! write(*,*) "    CD S2 = ", this%CDS2
-                ! write(*,*) "    CD qbar = ", this%CDqbar
-                ! write(*,*) "    CD aqbar = ", this%CDaqbar
-                ! write(*,*) "    CD de = ", this%CDde
-                ! write(*,*) "    CD ade = ", this%CDade
-                ! write(*,*) "    CD de2 = ", this%CDde2
-                
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.beta", this%Clb)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.pbar", this%Clpbar)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.rbar", this%Clrbar)
@@ -251,26 +228,11 @@ contains
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.aileron", this%Clda)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.rudder", this%Cldr)
                 
-                ! write(*,*) ""
-                ! write(*,*) "    Cl beta = ", this%Clb
-                ! write(*,*) "    Cl pbar = ", this%Clpbar
-                ! write(*,*) "    Cl rbar = ", this%Clrbar
-                ! write(*,*) "    Cl arbar = ", this%Clarbar
-                ! write(*,*) "    Cl da = ", this%Clda
-                ! write(*,*) "    Cl dr = ", this%Cldr
-                
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.0", this%Cm0)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.alpha", this%Cma)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.qbar", this%Cmqbar)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.alphahat", this%Cmahat)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.elevator", this%Cmde)
-                
-                ! write(*,*) ""
-                ! write(*,*) "    Cm 0 = ", this%Cm0
-                ! write(*,*) "    Cm a = ", this%Cma
-                ! write(*,*) "    Cm qbar = ", this%Cmqbar
-                ! write(*,*) "    Cm ahat = ", this%Cmahat
-                ! write(*,*) "    Cm de = ", this%Cmde
                 
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.beta", this%Cnb)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.pbar", this%Cnpbar)
@@ -279,15 +241,6 @@ contains
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.aileron", this%Cnda)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.alpha_aileron", this%Cnada)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.rudder", this%Cndr)
-                
-                ! write(*,*) ""
-                ! write(*,*) "    Cn beta = ", this%Cnb
-                ! write(*,*) "    Cn pbar = ", this%Cnpbar
-                ! write(*,*) "    Cn apbar = ", this%Cnapbar
-                ! write(*,*) "    Cn rbar = ", this%Cnrbar
-                ! write(*,*) "    Cn da = ", this%Cnda
-                ! write(*,*) "    Cn ada = ", this%Cnada
-                ! write(*,*) "    Cn dr = ", this%Cndr
 
             end if
 
@@ -321,8 +274,8 @@ contains
             
             call jsonx_get(this%j_vehicle, "thrust.T0[lbf]", this%thrust_T0, 0.0)
             call jsonx_get(this%j_vehicle, "thrust.Ta", this%thrust_Ta, 0.0)
-            call jsonx_get(this%j_vehicle, "thrust.locationp[ft]", this%thrust_loc, 0.0, 3)
-            call jsonx_get(this%j_vehicle, "thrust.locationp[ft]", thrust_orientation, 0.0, 3)
+            call jsonx_get(this%j_vehicle, "thrust.location[ft]", this%thrust_loc, 0.0, 3)
+            call jsonx_get(this%j_vehicle, "thrust.orientation[ft]", thrust_orientation, 0.0, 3)
             thrust_orientation = thrust_orientation*PI/180.0
             this%thrust_quat = euler_to_quat(thrust_orientation)
 
@@ -334,14 +287,18 @@ contains
             call jsonx_get(this%j_vehicle, "initial.airspeed[ft/s]",  this%init_V)
             call jsonx_get(this%j_vehicle, "initial.altitude[ft]",  this%init_alt)
             this%init_state(9) = -this%init_alt
-            call jsonx_get(this%j_vehicle, "initial.latitude[deg]",  this%lat)
-            this%lat = this%lat*PI/180.0
-            call jsonx_get(this%j_vehicle, "initial.longitude[deg]",  this%long)
-            this%long = this%long*PI/180.0
+            call jsonx_get(this%j_vehicle, "initial.latitude[deg]",  this%latitude_deg)
+            call jsonx_get(this%j_vehicle, "initial.longitude[deg]",  this%longitude_deg)
             call jsonx_get(this%j_vehicle, "initial.Euler_angles[deg]",  this%init_eul, 0.0, 3)
+            this%azimuth_deg = this%init_eul(3)
             this%init_eul = this%init_eul*PI/180.0
-          
+            this%latitude = this%latitude_deg*PI/180.
+            this%longitude = this%longitude_deg*PI/180.
 
+            
+            ! get rho, mu, Reynolds
+            call std_atm_English(0.0,junk1,junk2,junk3,this%rho0,junk4,junk5)
+            
             call jsonx_get(this%j_vehicle, "initial.type", this%init_type)
             
             if (this%init_type == "state") then
@@ -352,45 +309,41 @@ contains
                 write(*,*) " Invalid initial type in json. must be trim or state. Quitting..."
                 stop
             end if
-
-            this%init_state(10:13) = euler_to_quat(this%init_eul)
+            
             this%state = this%init_state
-
+            
             if (save_states) then
                 call vehicle_write_state(this, 0.0, this%state)
             end if
-
-            ! get rho, mu, Reynolds
-            call std_atm_English(0.0,junk1,junk2,junk3,this%rho0,junk4,junk5)
-
+            
+            
         end if ! run_physics
-
+        
         ! connections
         ! call jsonx_get(j_main, "connections", j_connections)
         ! call jsonx_get(j_connections, "graphics", j_graphics)
         ! call graphics%init(j_graphics)
-
+        
     end subroutine vehicle_init
-
-
+    
+    
     subroutine init_to_state(this)
-
+        
         implicit none
         type(vehicle_type) :: this 
-        real :: p0, q0, r0
-        real :: alpha0, beta0, da0, de0, dr0, tau0, rho0
-
+        real :: alpha0, beta0
+        
         this%trimming = .false.
-
+        
         call jsonx_get(this%j_vehicle, "initial.state.angle_of_attack[deg]", alpha0)
         call jsonx_get(this%j_vehicle, "initial.state.sideslip_angle[deg]", beta0)
         alpha0 = alpha0*PI/180.
         beta0 = beta0*PI/180.
-
+        
         this%init_state(1)  = this%init_V*cos(alpha0)*cos(beta0)   ! u
         this%init_state(2)  = this%init_V*sin(beta0)               ! v
         this%init_state(3)  = this%init_V*sin(alpha0)*cos(beta0)   ! w
-
+        
         call jsonx_get(this%j_vehicle, "initial.state.p[deg/s]",  this%init_state(4))
         call jsonx_get(this%j_vehicle, "initial.state.q[deg/s]",  this%init_state(5))
         call jsonx_get(this%j_vehicle, "initial.state.r[deg/s]",  this%init_state(6))
@@ -406,472 +359,389 @@ contains
         this%controls(2) = this%controls(2)*PI/180. ! de    
         this%controls(3) = this%controls(3)*PI/180. ! dr
 
+        this%init_state(10:13) = euler_to_quat(this%init_eul)
+
     end subroutine init_to_state
 
 
     subroutine init_to_trim(this)
-
+        
         implicit none
         type(vehicle_type) :: this 
-
+        integer, parameter :: n_vars = 9
+        integer :: max_iter, iter, n_free, i, j, k
+        integer, dimension(:), allocatable :: idx_free
+        logical :: free_vars(n_vars), found
+        real :: fd_step, relaxation, trim_tol, max_R
+        real :: alpha, beta, sa, sb, ca, cb
+        real, allocatable :: R(:), R_neg(:), R_up(:), R_dn(:), jac(:,:), x(:), dx(:)
+        
         this%trimming = .true.
-
+        
+        write(*,*) ""
+        write(*,*) "---------- Initializing with a Trim State ------------ "
+        
         ! read in trim settings
         call jsonx_get(this%j_vehicle, "initial.trim.type", this%trim%type)
-
-        this%trim%has_sideslip = .false.
-        call json_get(this%j_vehicle, "initial.trim.sideslip_angle[deg]", this%trim%sideslip0, this%trim%has_sideslip)
-        if (this%trim%has_sideslip) then
-            this%trim%sideslip0 = this%trim%sideslip0*PI/180.
-        end if
-
-        this%trim%has_gamma = .false.
-        call json_get(this%j_vehicle, "initial.trim.ref_climb_angle[deg]", this%trim%gamma0, this%trim%has_gamma)
-        write(*,*) " has gamma = ", this%trim%has_gamma
-        if (this%trim%has_gamma) then
-            this%trim%gamma0 = this%trim%gamma0*PI/180.
-        end if
+        write(*,*) "     Trim type = ", this%trim%type
         
-        this%trim%phi0 = this%init_eul(1)
-        this%trim%theta0 = this%init_eul(2)
-        this%trim%psi0 = this%init_eul(3)
-
-        call jsonx_get(this%j_vehicle, "initial.trim.solver.finite_difference_step_size", this%trim%fd_step)
-        call jsonx_get(this%j_vehicle, "initial.trim.solver.relaxation_factor", this%trim%r_factor)
-        call jsonx_get(this%j_vehicle, "initial.trim.solver.tolerance", this%trim%tol)
-        call jsonx_get(this%j_vehicle, "initial.trim.solver.max_iterations", this%trim%max_iter)
+        call jsonx_get(this%j_vehicle, "initial.trim.solver.finite_difference_step_size", fd_step)
+        call jsonx_get(this%j_vehicle, "initial.trim.solver.relaxation_factor", relaxation)
+        call jsonx_get(this%j_vehicle, "initial.trim.solver.tolerance", trim_tol)
+        call jsonx_get(this%j_vehicle, "initial.trim.solver.max_iterations", max_iter)
         call jsonx_get(this%j_vehicle, "initial.trim.solver.verbose", this%trim%verbose)
         
-        ! jump into trim
+        
+        allocate(x(n_vars))
+        allocate(dx(n_vars))
+        
+        ! initialize stuff
+        iter = 0
+        x = 0.
+        x(7:9) = this%init_eul
+        free_vars(1:6) = .true.
+        free_vars(7:9) = .false.
+        this%trim%load_factor = 1.0
+        
+        
+        this%trim%solve_for_sideslip = .false.
+        this%trim%solve_for_load_factor = .false.
+        this%trim%solve_for_fixed_climb_angle = .false.
+        this%trim%solve_for_relative_climb_angle = .false.
 
+        
+        
+        call json_get(this%j_vehicle, "initial.trim.fixed_climb_angle[deg]", this%trim%climb_angle, this%trim%solve_for_fixed_climb_angle)
+        if (this%trim%solve_for_fixed_climb_angle) then
+            write(*,*) ""
+            write(*,*) "     Fixed Climb Angle Specified "
+            write(*,*) "     climb_angle[deg] = ", this%trim%climb_angle
+            write(*,*) "     Setting elevation angle to fixed climb angle as initial guess"
+            this%trim%climb_angle = this%trim%climb_angle*PI/180
+            x(8) = this%trim%climb_angle ! initial guess
+            free_vars(8) = .true.
+        end if
+        
+        call json_get(this%j_vehicle, "initial.trim.relative_climb_angle[deg]", this%trim%climb_angle, this%trim%solve_for_relative_climb_angle)
+        if (this%trim%solve_for_relative_climb_angle) then
+            write(*,*) ""
+            write(*,*) "     Relative Climb Angle Specified "
+            write(*,*) "     climb_angle[deg] = ", this%trim%climb_angle
+            write(*,*) "     Setting elevation angle to relative climb angle as initial guess"
+            this%trim%climb_angle = this%trim%climb_angle*PI/180
+            x(8) = this%trim%climb_angle ! initial guess
+            free_vars(8) = .true.
+        end if
+
+        if (this%trim%type == "sct") then
+            call json_get(this%j_vehicle, "initial.trim.load_factor", this%trim%load_factor, this%trim%solve_for_load_factor)
+            if (this%trim%solve_for_load_factor) then
+                write(*,*) ""
+                write(*,*) "     Load Factor Specified "
+                write(*,*) "     load factor = ", this%trim%load_factor
+                x(7) = acos(cos(x(8))/this%trim%load_factor)
+                write(*,*) "     Setting load factor to initial guess based on approximation nL = cos(theta)/cos(phi)"
+                free_vars(7) = .true.
+            end if
+        end if
+
+        if (this%trim%type == "shss") then
+            call json_get(this%j_vehicle, "initial.trim.sideslip_angle[deg]", this%trim%sideslip, this%trim%solve_for_sideslip)
+            if (this%trim%solve_for_sideslip) then
+                write(*,*) ""
+                write(*,*) "     Sideslip Angle Specified "
+                write(*,*) "     beta[deg] = ", this%trim%sideslip
+                this%trim%sideslip = this%trim%sideslip*PI/180.
+                x(2) = this%trim%sideslip
+                free_vars(2) = .false.
+                free_vars(7) = .true.
+            end if 
+        end if
+
+
+        n_free = count(free_vars)
+        write(*,*) "     n_free = ", n_free
+        write(*,*) "     idx_free = ", idx_free
+        
+        allocate(R(n_free))
+        allocate(R_up(n_free))
+        allocate(R_dn(n_free))
+        allocate(Jac(n_free, n_free))
+        
+        idx_free = pack([(i, i=1,n_vars)], free_vars)
+        
+        if (this%trim%verbose) then
+            write(*,*) " "
+            write(*,*) "     Initial guess "
+            write(*,'(A, *(1x,ES24.16))') "      x = ", x
+        end if 
+        
+        R = calc_R(this, x, n_free)
+        max_R = maxval(abs(R))
+
+        if (this%trim%verbose) then
+            write(*,'(A, *(1x,ES24.16))') "      R = ", R
+            write(*,'(A, (1x,ES24.16))') "  max_R = ", max_R
+            write(*,*) ""
+            write(*,*) ""
+            write(*,*) "---------- Solving for Trim State ------------ "
+            write(*,*) ""
+        end if
+        
+        
+        do while (max_R > trim_tol)
+            if (iter + 1 > max_iter) exit
+            iter = iter + 1
+            
+            if (this%trim%verbose) then
+                write(*,*) ""
+                write(*,*) "---------------------------------------------"
+                write(*,*) "     Iteration ", iter
+                write(*,*) "---------------------------------------------"
+            end if
+            
+            do i=1,n_free
+                k = idx_free(i)
+                ! step up
+                x(k) = x(k) + fd_step
+                if (this%trim%verbose) then
+                    write(*,*) ""
+                    write(*,'(A, I0, A)') "     Perturbing up,   x[",k,"]"
+                    write(*,'(A, *(1x,ES24.16))') "     x_up = ", x
+                end if
+                R_up = calc_R(this, x, n_free)
+                    
+                if (this%trim%verbose) then
+                    write(*,'(A, *(1x,ES24.16))') "     R_up = ", R_up
+                end if
+
+
+                ! step dn
+                x(k) = x(k) - 2*fd_step
+
+                if (this%trim%verbose) then
+                    write(*,*) ""
+                    write(*,'(A, I0, A)') "     Perturbing dn,   x[",k,"]"
+                    write(*,'(A, *(1x,ES24.16))') "     x_dn = ", x
+                end if
+                
+                R_dn = calc_R(this, x, n_free)
+                if (this%trim%verbose) then
+                    write(*,'(A, *(1x,ES24.16))') "     R_dn = ", R_dn
+                    write(*,*) ""
+                    write(*,*) "     ---------------------------"
+                end if
+                
+                ! do i=1,n_free
+                !     jac(i,j) = (R_up(i) - R_dn(i))/(2*fd_step) 
+                ! end do
+                
+                jac(:,i) = (R_up - R_dn)/(2.0*fd_step)
+
+                x(k) = x(k) + fd_step
+                
+            end do 
+
+            if (this%trim%verbose) then
+                write(*,*) ""
+                write(*,*) "     Jacobian = "
+                do j = 1, n_free
+                    write(*,'(*(ES24.16))') jac(j, :)
+                end do
+            end if
+            
+            call lu_solve(n_free, jac, -R, dx) 
+            
+            do i=1,n_free
+                k = idx_free(i)
+                x(k) = x(k) + relaxation*dx(i)
+            end do
+            
+            if (this%trim%verbose) then
+                write(*,*) ""
+                write(*,'(A, *(1x,ES24.16))') "      dx = ", dx
+                write(*,'(A, *(1x,ES24.16))') "   x new = ", x
+            end if
+            
+            R = calc_R(this, x, n_free)
+            max_R = maxval(abs(R))
+
+            if (this%trim%verbose) then
+                write(*,'(A, *(1x,ES24.16))') "   R new = ", R
+                write(*,'(A, *(1x,ES24.16))') "     eps = ", max_R
+                write(*,*) ""
+                write(*,*) "     Iteration ", iter, " complete"
+                write(*,*) "---------------------------------------------"
+            end if
+            
+        end do
+        
+        this%controls = x(3:6)
+        
+        write(*,*) ""
+        write(*,*) "     Solved in ", iter, "iterations"
+        write(*,*) ""
+        write(*,*) "---------------------------------------------"
+        write(*,*) "           Trim Solution for ", this%trim%type
+        write(*,*) "---------------------------------------------"
+        write(*,'(A, 1(1x,ES22.14))') ""
+        write(*,'(A, 1(1x,ES22.14))') "                      Trim settings "
+        write(*,'(A, 1(1x,ES22.14))') "                 alpha[deg] = ", x(1)*180./pi
+        write(*,'(A, 1(1x,ES22.14))') "                  beta[deg] = ", x(2)*180./pi
+        write(*,*)"" 
+        write(*,'(A, 1(1x,ES22.14))') "                   p[deg/s] = ", this%init_state(4)*180./pi
+        write(*,'(A, 1(1x,ES22.14))') "                   q[deg/s] = ", this%init_state(5)*180./pi
+        write(*,'(A, 1(1x,ES22.14))') "                   r[deg/s] = ", this%init_state(6)*180./pi
+        write(*,*)"" 
+        write(*,'(A, 1(1x,ES22.14))') "                    da[deg] = ", this%controls(1)*180./pi
+        write(*,'(A, 1(1x,ES22.14))') "                    de[deg] = ", this%controls(2)*180./pi
+        write(*,'(A, 1(1x,ES22.14))') "                    dr[deg] = ", this%controls(3)*180./pi
+        write(*,'(A, 1(1x,ES22.14))') "                   throttle = ", this%controls(4)
+        write(*,*)"" 
+        write(*,'(A, 1(1x,ES22.14))') "                   phi[deg] = ", x(7)*180./pi
+        write(*,'(A, 1(1x,ES22.14))') "                 theta[deg] = ", x(8)*180./pi
+        write(*,'(A, 1(1x,ES22.14))') "                   psi[deg] = ", x(9)*180./pi
+        if (this%trim%solve_for_fixed_climb_angle) then
+            write(*,*)"" 
+            write(*,'(A, 1(1x,ES22.14))') "     fixed climb angle[deg] = ", this%trim%climb_angle*180./pi
+        end if
+        if (this%trim%solve_for_relative_climb_angle) then
+            write(*,*)"" 
+            write(*,'(A, 1(1x,ES22.14))') "  relative climb angle[deg] = ", this%trim%climb_angle*180./pi
+        end if
+        if (this%trim%solve_for_load_factor) then
+            write(*,*)"" 
+            write(*,'(A, 1(1x,ES22.14))') "                load factor = ", this%trim%load_factor
+        end if 
+        
+        
         this%trimming = .false.
     
     end subroutine init_to_trim
 
 
-    ! function calc_R(p,q,r, theta, G) result(R_)
+    function calc_R(this, x, n_free) result(R)
+        implicit none
+        type(vehicle_type) :: this
+        real, intent(in) :: x(9)
+        integer, intent(in) :: n_free
+        real :: dydt(13), R(n_free), xyzdot(3), FM(6)
+        real :: ca, sa, cb, sb, cp, sp, ct, st 
+        real :: u, v, w, V0, grav, ac
+        real :: c1, pw
+        integer :: last
 
-    !     implicit none 
+        ca = cos(x(1))
+        sa = sin(x(1))
+        cb = cos(x(2))
+        sb = sin(x(2))
+        cp = cos(x(7))
+        sp = sin(x(7))
+        ct = cos(x(8))
+        st = sin(x(8))
 
-    !     real, intent(in) :: p, q, r, theta
-    !     real, dimension(6), intent(in) :: G
-    !     real, dimension(6) :: R_
-    !     real, dimension(13) :: y, dydt 
-    !     real :: alpha, beta, phi, psi
-
-    !     alpha = G(1)
-    !     ! theta = theta0
-    !     psi = psi0
-    !     controls(1) = G(3)
-    !     controls(2) = G(4)
-    !     controls(3) = G(5)
-    !     controls(4) = G(6)
-
-    !     if (trim_type == "shss" .and. has_sideslip) then
-    !         phi = G(2)
-    !         beta = sideslip0 
-
-    !     else
-    !         beta = G(2)
-    !         phi = phi0
-    !     end if
+        V0 = this%init_V
+        u = V0*ca*cb
+        v = V0*sb
+        w = V0*sa*cb
         
-    !     y(1)  = V0*cos(alpha)*cos(beta)   ! u
-    !     y(2)  = V0*sin(beta)               ! v
-    !     y(3)  = V0*sin(alpha)*cos(beta)   ! w
-    !     y(4)  = p             ! p
-    !     y(5)  = q              ! q
-    !     y(6)  = r              ! r
-    !     y(7)  = 0.0             ! xf
-    !     y(8)  = 0.0             ! yf
-    !     y(9)  = zf0             ! zf
-    !     y(10) = phi            ! phi
-    !     y(11) = theta          ! theta
-    !     y(12) = psi            ! psi
+        this%controls = x(3:6)
 
+        ! build state for diff eq
+        this%init_state(1) = u
+        this%init_state(2) = v
+        this%init_state(3) = w
         
-    !     !  convert phi, theta, and psi to a quat
-    !     y(10:13) = euler_to_quat(y(10:12))
-        
-    !     !  normalize the quat
-    !     call quat_norm(y(10:13))
-        
-    !     ! write(*,*) "before diff_eq"
-    !     if (verbose2) then
-    !         write(*,*) "y going into diff_eq in calc_R", y
-    !     end if
-        
-    !     ! write(*,*)"y = ",y
-    !     dydt = diff_eq(y)
-    !     ! write(*,*) "after diff_eq"
-    !     ! write(*,*)"dydt = ",dydt
-    !     R_ = dydt(1:6)
+        grav = gravity_English(-this%init_state(9))
+        ! do this first to calc ac
+        this%init_state(10:13) = euler_to_quat(x(7:9))
+        xyzdot = quat_dependent_to_base(this%init_state(1:3), this%init_state(10:13)) ! + Vwf
+        ac = gravity_relief_factor*(xyzdot(1)**2 + xyzdot(2)**2)/(RE/0.3048 - this%init_state(9))
+        c1 = (grav-ac)*sp*ct/(u*ct*cp + w*st)
+            
+        if (this%trim%type == "shss") then
+            this%init_state(4) = 0.0
+            this%init_state(5) = 0.0
+            this%init_state(6) = 0.0     
+        else if (this%trim%type == "sct") then ! eq 6.2.3
+            this%init_state(4) = -c1*st
+            this%init_state(5) =  c1*sp*ct
+            this%init_state(6) =  c1*cp*ct
+        else if (this%trim%type == "br") then
+            pw = c1*(-u*st + v*sp*ct + w*cp*ct)/V0
+            this%init_state(4) = pw*u/V0
+            this%init_state(5) = pw*v/V0
+            this%init_state(6) = pw*w/V0
+        end if 
+
+        if (this%trim%verbose) then
+            write(*,*) "     Updating p,q,r for ", this%trim%type
+            write(*,'(A, 1(1x,ES24.16))') "        p[deg/s] = ", this%init_state(4)*180./pi
+            write(*,'(A, 1(1x,ES24.16))') "        q[deg/s] = ", this%init_state(5)*180./pi
+            write(*,'(A, 1(1x,ES24.16))') "        r[deg/s] = ", this%init_state(6)*180./pi
+        end if
 
 
-    ! end function calc_R
+        dydt = diff_eq(this, this%init_state)
+        R(1:6) = dydt(1:6) 
+        last = 6
+
+        if (this%trim%solve_for_load_factor) then
+            last = last + 1
+            FM = pseudo_aero(this, this%init_state)
+            R(last) = this%trim%load_factor - (FM(1)*sa - FM(3)*ca)/(this%mass*(grav-ac))
+        end if
+
+        if (this%trim%solve_for_fixed_climb_angle) then
+            last = last + 1
+            R(last) = this%trim%climb_angle - calc_relative_climb_angle(this%init_state)
+        end if
+
+        if (this%trim%solve_for_relative_climb_angle) then
+            last = last + 1
+            R(last) = this%trim%climb_angle - calc_relative_climb_angle(this%init_state)
+        end if
+
+    end function calc_R
 
 
-    ! function trim_solver() result(ans)
-
+    ! function calc_load_factor(y) result(ans)
     !     implicit none
+    !     real, dimension(13) :: y
+    !     real :: ans 
+    !     real, dimension(3) :: xyzdot
+    !     real :: Vmag 
 
-    !     real :: alpha, beta, u, v, w, p, q, r, phi, theta, psi, da, de, dr, tau, eps, grav, c1, pw
-    !     real :: a, b, c, theta_plus, theta_minus, err_theta_plus, err_theta_minus
-    !     real, dimension(13) :: ans
-    !     real, dimension(6) :: G, R_plus, R_minus, R_neg, R_
-    !     real,dimension(:),allocatable :: delta_G
-    !     real, dimension(6,6) :: jac
-    !     integer :: i,j, iter
-
-    !     p_trim = 0.0
-    !     q_trim = 0.0
-    !     r_trim = 0.0
-    !     ! theta = theta0
-    !     psi = psi0
-    !     controls = 0.0
-    !     G = 0.0
-
-    !     alpha = G(1)
-            
-    !     if (trim_type == "shss" .and. has_sideslip) then
-    !         phi = G(2)
-    !         beta = sideslip0 
-    !     else
-    !         beta = G(2)
-    !         phi = phi0
-    !     end if
-
-    !     eps = 1.0
-
-    !     if (verbose) then
-    !         write(*,*) ""
-    !         if (trim_type == "shss") then
-
-    !             if (has_sideslip) then
-    !                 write(*,*) "Solving for trim condition: Steady Heading Sideslip"
-    !                 if (has_gamma) then
-    !                     write(*,*) "beta[deg] = ", sideslip0*180./pi, ",  climb_angle[deg] = ", gamma0*180./pi, &
-    !                     ",  psi[deg] = ", psi*180./pi
-    !                 else
-    !                     write(*,*) "beta[deg] = ", sideslip0*180./pi, ",  theta[deg] = ", theta*180./pi, &
-    !                     ",  psi[deg] = ", psi*180./pi
-    !                 end if
-    !             else
-    !                 write(*,*) "Solving for trim condition: Steady Heading Sideslip"
-    !                 if (has_gamma) then
-    !                     write(*,*) "phi[deg] = ", phi*180./pi, ",  climb_angle[deg] = ", gamma0*180./pi, &
-    !                     ",  psi[deg] = ", psi*180./pi
-    !                 else
-    !                     write(*,*) "phi[deg] = ", phi*180./pi, ",  theta[deg] = ", theta*180./pi, &
-    !                     ",  psi[deg] = ", psi*180./pi
-    !                 end if
-    !             end if
-
-    !         else if (trim_type == "sct") then
-    !             write(*,*) "Solving for trim condition: Steady Coordinated Turn"
-    !             if (has_gamma) then
-    !                 write(*,*) "phi[deg] = ", phi*180./pi, ",  climb_angle[deg] = ", gamma0*180./pi, &
-    !                 ",  psi[deg] = ", psi*180./pi
-    !             else
-    !                 write(*,*) "phi[deg] = ", phi*180./pi, ",  theta[deg] = ", theta*180./pi, &
-    !                 ",  psi[deg] = ", psi*180./pi
-    !             end if
-    !         else 
-    !             write(*,*) "Solving for trim condition: Vertical Barrel Roll"
-    !             if (has_gamma) then
-    !                 write(*,*) "phi[deg] = ", phi*180./pi, ",  climb_angle[deg] = ", gamma0*180./pi, &
-    !                 ",  psi[deg] = ", psi*180./pi
-    !             else
-    !                 write(*,*) "phi[deg] = ", phi*180./pi, ",  theta[deg] = ", theta*180./pi, &
-    !                 ",  psi[deg] = ", psi*180./pi
-    !             end if
-    !         end if
-    !         write(*,*)""
-    !         ! write(*,*) "initial eps = ", eps
-    !     end if
-
-    !     grav = gravity_English(-zf0)
-    !     iter = 1
-        
-    !     do while(eps > trim_tol .and. iter < trim_max_iter)
-    !         if (verbose2) then
-    !             write(*,*)""
-    !             write(*,*) "iter = ", iter
-    !         end if
-    !         ! limit throttle to 0 to 1
-    !         if (G(6) < 0.0) then
-    !             G(6) = 0.0
-    !             if (verbose2) then
-    !                 write(*,*)""
-    !                 write(*,*) " Overwriting negative throttle"
-    !             end if 
-    !         else if (G(6) > 1.0) then
-    !             G(6) = 1.0
-    !             if (verbose2) then
-    !                 write(*,*)""
-    !                 write(*,*) " Limiting throttle to 100 percent"
-    !             end if
-    !         end if
-
-    !         alpha = G(1)
-            
-    !         if (trim_type == "shss" .and. has_sideslip) then
-    !             phi = G(2)
-    !             beta = sideslip0 
-    !         else
-    !             beta = G(2)
-    !             phi = phi0
-    !         end if
-            
-    !         u  = V0*cos(alpha)*cos(beta)   ! u
-    !         v  = V0*sin(beta)               ! v
-    !         w  = V0*sin(alpha)*cos(beta)
-
-    !         if (has_gamma) then
-    !             a = u*V0*sin(gamma0)
-    !             b = (v*sin(phi) + w*cos(phi))*sqrt(u*u + (v*sin(phi) + w*cos(phi))**2 - V0*V0*sin(gamma0)*sin(gamma0))
-    !             c = u*u + (v*sin(phi) + w*cos(phi))**2
-    !             theta_plus = asin((a + b)/c)
-    !             theta_minus = asin((a - b)/c)
-    !             err_theta_plus = abs(u*sin(theta_plus) - (v*sin(phi) + w*cos(phi))*cos(theta_plus) - V0*sin(gamma0))
-    !             err_theta_minus = abs(u*sin(theta_minus) - (v*sin(phi) + w*cos(phi))*cos(theta_minus) - V0*sin(gamma0))
-    !             ! write(*,*) "err plus = ", err_theta_plus
-    !             ! write(*,*) "err minus = ", err_theta_minus
-    !             if (err_theta_plus < err_theta_minus) then
-    !                 theta = theta_plus
-    !             else 
-    !                 theta = theta_minus
-    !             end if
-    !             if (verbose2) then
-    !                 write(*,*)""
-    !                 write(*,'(A, 1(1x,ES20.12))') "      theta_1[deg] = ", theta_plus*180./pi
-    !                 write(*,'(A, 1(1x,ES20.12))') "      theta_2[deg] = ", theta_minus*180./pi
-    !                 write(*,'(A, 1(1x,ES20.12))') "correct theta[deg] = ", theta*180./pi
-    !                 write(*,'(A, 1(1x,ES20.12))') "correct theta[rad] = ", theta
-    !                 write(*,*)""
-    !             end if 
-    !         else
-    !             theta = theta0
-    !         end if
-            
-    !         c1 = grav*sin(phi)*cos(theta)/(u*cos(theta)*cos(phi) + w*sin(theta))
-            
-    !         if (trim_type == "sct") then ! eq 6.2.3
-    !             ! write(*,*) "phi", phi
-    !             ! write(*,*) "theta", theta
-    !             ! write(*,*) "u", u
-    !             ! write(*,*) "v", v
-    !             ! write(*,*) "w", w
-    !             ! write(*,*) "grav", grav
-    !             ! write(*,*) "alt", -zf0
-    !             p_trim = -c1*sin(theta)
-    !             q_trim =  c1*sin(phi)*cos(theta)
-    !             r_trim =  c1*cos(phi)*cos(theta)
-    !         end if
-            
-    !         if (trim_type == "vbr") then
-    !             pw = c1*(-u*sin(theta) + v*sin(phi)*cos(theta) + w*cos(phi)*cos(theta))/V0
-    !             p_trim = pw*u/V0
-    !             q_trim = pw*v/V0
-    !             r_trim = pw*w/V0
-    !         end if 
+    !     xyzdot = quat_dependent_to_base(y(1:3), y(10:13))
+    !     Vmag = sqrt(y(1)**2 + y(2)**2 + y(3)**2)
+    !     ans = asin(-xyzdot(3)/Vmag)
+    ! end function calc_load_factor
 
 
-    !         if (verbose2) then
-    !             write(*,*) ""
-    !             write(*,*) "Updating p,q,r"
-    !             write(*,'(A, 1(1x,ES20.12))') "p[deg/s] = ", p_trim*180./pi
-    !             write(*,'(A, 1(1x,ES20.12))') "q[deg/s] = ", q_trim*180./pi
-    !             write(*,'(A, 1(1x,ES20.12))') "r[deg/s] = ", r_trim*180./pi
-    !         end if
-            
-    !         if (verbose2) then
-    !             write(*,*) ""
-    !             write(*,*) "G with Throttle forced to be 0-1"
-    !             write(*,'(A, 6(1x,ES20.12))') "    G = ", G
-    !         end if
-    !         R_ = calc_R(p_trim, q_trim, r_trim, theta, G)
-    !         if (verbose2) then
-    !             write(*,'(A, 6(1x,ES20.12))') "   R_ = ", R_
-    !         end if
+    function calc_fixed_climb_angle(y) result(ans)
+        implicit none
+        real, dimension(13) :: y
+        real :: ans 
+        real, dimension(3) :: xyzdot
+        real :: Vmag 
 
-    !         do j=1,6
-    !             G(j) = G(j) + trim_fd_step
-    !             if (verbose2) then
-    !                 write(*,*) ""
-    !                 write(*,*) "                 j = ", j
-    !                 write(*,'(A, 6(1x,ES20.12))') "   G_up = ", G
-    !             end if
-    !             R_plus = calc_R(p_trim, q_trim, r_trim, theta, G)
-
-    !             if (verbose2) then
-    !                 write(*,'(A, 6(1x,ES20.12))') " R_plus = ", R_plus
-    !             end if
-
-    !             G(j) = G(j) - 2*trim_fd_step
-    !             if (verbose2) then
-    !                 write(*,*) ""
-    !                 write(*,'(A, 6(1x,ES20.12))') "   G_dn = ", G
-    !             end if
-    !             R_minus = calc_R(p_trim, q_trim, r_trim, theta, G)
-
-    !             if (verbose2) then
-    !                 write(*,'(A, 6(1x,ES20.12))') "R_minus = ", R_minus
-    !             end if
-
-    !             do i = 1,6
-    !                 jac(i,j) = (R_plus(i) - R_minus(i))/(2*trim_fd_step)
-    !             end do
-    !             G(j) = G(j) + trim_fd_step
-                
-    !         end do
-
-    !         if (verbose2) then
-    !             write(*,*) ""
-    !             write(*,*) "Jacobian = "
-    !             do i = 1, 6
-    !                 write(*,'(6ES20.12)') jac(i, :)
-    !             end do
-    !         end if
-
-    !         R_neg = -1*R_
-    !         if (verbose2) then
-    !             write(*,*) ""
-    !             write(*,*) "G used to calculate R_neg which goes into lu_solve:"
-    !             write(*,'(A, 6(1x,ES20.12))') "      G  = ", G
-    !             write(*,'(A, 6(1x,ES20.12))') "  R_neg  = ", R_neg
-    !         end if
-    !         call lu_solve(6, jac, R_neg, delta_G) 
-            
+        xyzdot = quat_dependent_to_base(y(1:3), y(10:13))
+        ans = asin(-xyzdot(3)/sqrt(xyzdot(1)**2 + xyzdot(2)**2 + xyzdot(3)**2))
+    end function calc_fixed_climb_angle
 
 
-    !         G = G + trim_r_factor*delta_G
-    !         if (verbose2) then
-    !             write(*,*) ""
-    !             write(*,'(A, 6(1x,ES20.12))') " Delta G = ", delta_G
-    !             write(*,'(A, 6(1x,ES20.12))') "   G new = ", G
-    !         end if
-    !         R_ = calc_R(p_trim, q_trim, r_trim, theta, G)
-            
-    !         eps = norm2(R_)
+    function calc_relative_climb_angle(y) result(ans)
+        implicit none
+        real, dimension(13) :: y
+        real :: ans 
+        real, dimension(3) :: xyzdot
+        real :: Vmag 
 
-            
-    !         if (verbose2) then
-    !             write(*,*) ""
-    !             write(*,'(A, 6(1x,ES20.12))') "      R_ = ", R_
-    !             write(*,'(A, 6(1x,ES20.12))') "     eps = ", eps
-    !             write(*,*) "iter ", iter, " complete"
-    !         end if
-            
-    !         iter = iter+1
-    !     end do
-        
-        
-        
-    !     alpha = G(1)
-        
-    !     if (trim_type == "shss" .and. has_sideslip) then
-    !         phi = G(2)
-    !         beta = sideslip0 
-    !     else
-    !         beta = G(2)
-    !         phi = phi0
-    !     end if
-            
-    !     u  = V0*cos(alpha)*cos(beta)   ! u
-    !     v  = V0*sin(beta)               ! v
-    !     w  = V0*sin(alpha)*cos(beta)
+        xyzdot = quat_dependent_to_base(y(1:3), y(10:13))
+        Vmag = sqrt(y(1)**2 + y(2)**2 + y(3)**2)
+        ans = asin(-xyzdot(3)/Vmag)
+    end function calc_relative_climb_angle
 
-    !     if (has_gamma) then
-    !         a = u*V0*sin(gamma0)
-    !         b = (v*sin(phi) + w*cos(phi))*sqrt(u*u + (v*sin(phi) + w*cos(phi))**2 - V0*V0*sin(gamma0)*sin(gamma0))
-    !         c = u*u + (v*sin(phi) + w*cos(phi))**2
-    !         theta_plus = asin((a + b)/c)
-    !         theta_minus = asin((a - b)/c)
-    !         err_theta_plus = abs(u*sin(theta_plus) - (v*sin(phi) + w*cos(phi))*cos(theta_plus) - V0*sin(gamma0))
-    !         err_theta_minus = abs(u*sin(theta_minus) - (v*sin(phi) + w*cos(phi))*cos(theta_minus) - V0*sin(gamma0))
-    !         ! write(*,*) "err plus = ", err_theta_plus
-    !         ! write(*,*) "err minus = ", err_theta_minus
-    !         if (err_theta_plus < err_theta_minus) then
-    !             theta = theta_plus
-    !         else 
-    !             theta = theta_minus
-    !         end if
-    !         if (verbose2) then
-    !             write(*,*)""
-    !             write(*,'(A, 1(1x,ES20.12))') "      theta_1[deg] = ", theta_plus*180./pi
-    !             write(*,'(A, 1(1x,ES20.12))') "      theta_2[deg] = ", theta_minus*180./pi
-    !             write(*,'(A, 1(1x,ES20.12))') "correct theta[deg] = ", theta*180./pi
-    !             write(*,'(A, 1(1x,ES20.12))') "correct theta[rad] = ", theta
-    !             write(*,*)""
-    !         end if 
-    !         else
-    !             theta = theta0
-    !     end if  
-
-    !     c1 = grav*sin(phi)*cos(theta)/(u*cos(theta)*cos(phi) + w*sin(theta))
-
-    !     if (trim_type == "sct") then
-    !         p_trim = -c1*sin(theta)
-    !         q_trim =  c1*sin(phi)*cos(theta)
-    !         r_trim =  c1*cos(phi)*cos(theta)
-    !     end if
-
-        
-    !     if (trim_type == "vbr") then
-    !         pw = c1*(-u*sin(theta) + v*sin(phi)*cos(theta) + w*cos(phi)*cos(theta))/V0
-    !         p_trim = pw*u/V0
-    !         q_trim = pw*v/V0
-    !         r_trim = pw*w/V0
-    !     end if 
-        
-        
-    !     ans(1)  = V0*cos(alpha)*cos(beta)   ! u
-    !     ans(2)  = V0*sin(beta)               ! v
-    !     ans(3)  = V0*sin(alpha)*cos(beta)   ! w
-    !     ans(4)  = p_trim              ! p
-    !     ans(5)  = q_trim              ! q
-    !     ans(6)  = r_trim              ! r
-    !     ans(7)  = 0.0             ! xf
-    !     ans(8)  = 0.0             ! yf
-    !     ans(9)  = zf0             ! zf
-    !     ans(10) = phi            ! phi
-    !     ans(11) = theta          ! theta
-    !     ans(12) = psi            ! psi
-        
-    !     !  convert phi, theta, and psi to a quat
-    !     ans(10:13) = euler_to_quat(ans(10:12))
-        
-    !     controls(1) = G(3)
-    !     controls(2) = G(4)
-    !     controls(3) = G(5)
-    !     controls(4) = G(6)
-        
-    !     if (verbose) then
-    !         write(*,*) ""
-    !         write(*,*) "Solved in ", iter-1, "iterations"
-    !         write(*,'(A, 1(1x,ES20.12))') ""
-    !         write(*,'(A, 1(1x,ES20.12))') "       Trim settings "
-    !         write(*,'(A, 1(1x,ES20.12))') "      alpha[deg] = ", alpha*180./pi
-    !         write(*,'(A, 1(1x,ES20.12))') "       beta[deg] = ", beta*180./pi
-    !         write(*,'(A, 1(1x,ES20.12))') "        p[deg/s] = ", p_trim*180./pi
-    !         write(*,'(A, 1(1x,ES20.12))') "        q[deg/s] = ", q_trim*180./pi
-    !         write(*,'(A, 1(1x,ES20.12))') "        r[deg/s] = ", r_trim*180./pi
-    !         write(*,'(A, 1(1x,ES20.12))') "         da[deg] = ", controls(1)*180./pi
-    !         write(*,'(A, 1(1x,ES20.12))') "         de[deg] = ", controls(2)*180./pi
-    !         write(*,'(A, 1(1x,ES20.12))') "         dr[deg] = ", controls(3)*180./pi
-    !         write(*,'(A, 1(1x,ES20.12))') "        throttle = ", controls(4)
-    !         write(*,*)"" 
-    !         write(*,'(A, 1(1x,ES20.12))') "        phi[deg] = ", phi*180./pi
-    !         if (has_gamma) then
-    !             write(*,'(A, 1(1x,ES20.12))') "climb_angle[deg] = ", gamma0*180./pi
-    !         end if              
-    !         write(*,'(A, 1(1x,ES20.12))') "      theta[deg] = ", theta*180./pi
-    !         write(*,'(A, 1(1x,ES20.12))') "      theta[deg] = ", theta*180./pi
-    !         write(*,'(A, 1(1x,ES20.12))') "        psi[deg] = ", psi*180./pi
-    !     end if
-
-    ! end function trim_solver
 
 
     function pseudo_aero(this, y) result(FM)
@@ -1006,11 +876,11 @@ contains
         end if
             
         ! limit throttle to 0 to 100
-        if (tau < 0.0) then
-            tau = 0.0
-        else if (tau > 1.0) then
-            tau = 1.0
-        end if
+        ! if (tau < 0.0) then
+        !     tau = 0.0
+        ! else if (tau > 1.0) then
+        !     tau = 1.0
+        ! end if
         
         ! Calculate forces and moments due to throttle
         FTx = tau*this%thrust_T0*(rho/this%rho0)**this%thrust_Ta
@@ -1192,13 +1062,15 @@ contains
 
         ac = gravity_relief_factor*(dydt(7)**2 + dydt(8)**2)/(RE/0.3048 - zf)
         ! write(*,*)" ac = ", ac
-
+        
         dydt(1)  = (Fxb/this%mass) + (g-ac)*(2.0*(ex*ez - ey*e0)) + (r*v) - (q*w) ! udot
         dydt(2)  = (Fyb/this%mass) + (g-ac)*(2.0*(ey*ez + ex*e0)) + (p*w) - (r*u) ! vdot
         dydt(3)  = (Fzb/this%mass) + (g-ac)*(ez**2 + e0**2 - ex**2 - ey**2) + (q*u) - (p*v) ! wdot
         dydt(4)  = pqr_dot(1) ! pdot
         dydt(5)  = pqr_dot(2) ! qdot
         dydt(6)  = pqr_dot(3) ! rdot
+        ! write(*,*)" Fxb/mass = ",Fxb/this%mass
+        ! write(*,*)" other stuff = ",(Fxb/this%mass) + (g-ac)*(2.0*(ex*ez - ey*e0))
         
         
         dydt(10) = 0.5*(-ex*p - ey*q - ez*r) ! e0 dot
@@ -1264,19 +1136,24 @@ contains
         
         type(vehicle_type) :: this
         real, intent(in) :: time, dt
-        real, dimension(13) :: y_next
-            
-        y_next = rk4(this, time, this%state, dt)
+        real, dimension(13) :: y, y_next
+        
+        y = this%state
 
-        ! write(*,'(A20, *(ES20.12))') this%name, time, dt, y_next(:)
+        y_next = rk4(this, time, y, dt)
+
+        if (geographic_model_ID > 0) call update_geographic(this, y, y_next)
+
         call quat_norm(y_next(10:13))
-        ! write(*,'(A20, *(ES20.12))') this%name, time, dt, y_next
-
+        if (sqrt(y_next(4)**2 + y_next(5)**2 + y_next(6)**2)*dt/(2.0*PI) > 0.1) write(*,*) "WARNING: High Vehicle Rotation relative to integration timestep"
+        
         this%state = y_next
 
         ! write to file
         if (save_states) then
-            call vehicle_write_state(this, dt, y_next)
+            ! call vehicle_write_state(this, dt, y_next)
+            write(this%iunit_states,*) "time[s],u[ft/s],v[ft/s],w[ft/s],p[rad/s],q[rad/s],r[rad/s],x[ft],y[ft],z[ft],e0,ex,ey,ez"
+            write(*,*) "    - states will be written to ", this%states_filename
         end if
         
         if (verbose2) then
@@ -1287,6 +1164,84 @@ contains
         end if
             
     end subroutine vehicle_tick_state
+
+
+    subroutine update_geographic(this, y1, y2)
+        implicit none
+        type(vehicle_type) :: this
+        real, dimension(13), intent(in) :: y1, y2
+        real :: dx, dy, dz, d
+        real :: H, Phi1, Theta, Psi1, psi_g1
+        real :: cPhi, sPhi, cTheta, sTheta, cpsi_g1, spsi_g1 
+        real :: xhat, yhat, zhat, xhp, yhp, zhp
+        real :: Chat, Shat, rhat, dg
+        real :: quat(4), eul(3)
+
+        dx = (y2(7) - y1(7))
+        dy = (y2(8) - y1(8))
+        d = sqrt(dx**2 + dy**2)
+        
+        if (d < TOLERANCE) then
+            write(*,*) "WARNING: Geographic coordinates update- xf, yf displacement is too small, d = ", d
+        else
+            H = -y1(9)
+            dz = (y2(9) - y1(9))
+            Phi1 = this%latitude
+            Psi1 = this%longitude
+            cPhi = cos(Phi1)
+            sPhi = sin(Phi1)
+            if (geographic_model_ID == 1) then ! spherical earth model
+                Theta = d/(RE + H - dz/2.0)
+                cTheta = cos(Theta)
+                sTheta = sin(Theta)
+                
+                psi_g1 = atan2(dy, dx)
+                cpsi_g1 = cos(psi_g1)
+                spsi_g1 = sin(psi_g1)
+
+                xhat = cPhi*cTheta - sPhi*sTheta*cpsi_g1 
+                yhat = sTheta*spsi_g1
+                zhat = sPhi*cTheta + cPhi*sTheta*cpsi_g1
+
+                xhp = -cPhi*sTheta - sPhi*cTheta*cpsi_g1
+                yhp = cTheta*spsi_g1
+                zhp = -sPhi*sTheta + cPhi*cTheta*cpsi_g1
+
+                rhat = sqrt(xhat**2 + yhat**2)
+
+                this%latitude = atan2(zhat, rhat)
+                this%longitude = Psi1 + atan2(yhat, xhat)
+
+                Chat = (xhat**2)*zhp
+                Shat = (xhat*yhp - yhat*xhp)*cos(this%latitude)**2*cos(this%longitude - Psi1)**2
+                dg = atan2(Shat, Chat) - psi_g1
+
+            else if (geographic_model_ID == 2) then ! ellipse model
+                ! implement ellipse model
+            end if
+
+            ! limit longitude
+            if (this%longitude >  PI) this%longitude = this%longitude - 2.*PI
+            if (this%longitude < -PI) this%longitude = this%longitude + 2.*PI
+
+            quat(1) = -this%state(13)
+            quat(2) = -this%state(12)
+            quat(3) =  this%state(11)
+            quat(4) =  this%state(10)
+
+            this%state(10:13) = cos(dg/2.)*this%state(10:13) + sin(dg/2.)*quat(:)
+            
+            
+            eul = quat_to_euler(this%state(10:13))
+            this%azimuth_deg = eul(3)*180./PI
+            this%latitude_deg = this%latitude*180./PI
+            this%longitude_deg = this%longitude*180./PI
+        end if
+
+        
+
+
+    end subroutine update_geographic
 
 
     subroutine vehicle_write_state(this, time, y)

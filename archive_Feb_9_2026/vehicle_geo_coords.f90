@@ -26,16 +26,6 @@ module vehicle_m
         real :: u, v, w, p, q, r
     end type trim_settings_type
         
-    type control_type
-        character(len=:), allocatable :: name
-        character(len=:), allocatable :: units
-        integer :: dynamics_order, state_ID
-        real :: commanded_value
-        real, allocatable, dimension(:) :: mag_limit, rate_limit, accel_limit
-        real :: time_constant, nat_freq, damp_ratio
-        real :: display_units = 1.0
-    end type control_type
-
     type vehicle_type
         
         type(json_value), pointer :: j_vehicle
@@ -47,8 +37,6 @@ module vehicle_m
         integer :: iunit_states, iunit_rk4, iunit_trim
         logical :: run_physics
         logical :: trimming
-        logical :: limit_controls = .true.
-        integer :: aileron_ID, elevator_ID, rudder_ID, throttle_ID
         
         ! mass constants
         real :: weight, mass
@@ -79,12 +67,13 @@ module vehicle_m
         ! intitialization constants
         character(len=:), allocatable :: init_type
         real, dimension(:), allocatable :: init_eul
+        real, dimension(13) :: init_state
         real :: init_V, init_alt
         real :: rho0
 
         ! variables
-        real, dimension(21) :: state, init_state
-        type(control_type) :: controls(4)
+        real, dimension(13) :: state
+        real, dimension(4) :: controls
         real :: latitude, longitude, latitude_deg, longitude_deg, azimuth_deg
 
         type(trim_settings_type) :: trim
@@ -102,7 +91,7 @@ contains
     subroutine vehicle_init(this, vehicle_json)
         implicit none
         type(vehicle_type) :: this 
-        type(json_value), pointer :: vehicle_json, j_control, j_control_temp
+        type(json_value), pointer :: vehicle_json
         real, dimension(:), allocatable :: thrust_orientation, hxyz
         real :: det
         real :: junk1, junk2, junk3, junk4, junk5
@@ -252,19 +241,6 @@ contains
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.aileron", this%Cnda)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.alpha_aileron", this%Cnada)
                 call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.rudder", this%Cndr)
-                
-                ! control effectors
-                write(*,*) "    - controls"
-                call jsonx_get(this%j_vehicle, "control_effectors", j_control)
-                call jsonx_get(j_control, "1", j_control_temp)
-                call init_control(this, j_control_temp, 1)
-                call jsonx_get(j_control, "2", j_control_temp)
-                call init_control(this, j_control_temp, 2)
-                call jsonx_get(j_control, "3", j_control_temp)
-                call init_control(this, j_control_temp, 3)
-                call jsonx_get(j_control, "4", j_control_temp)
-                call init_control(this, j_control_temp, 4)
-                
 
             end if
 
@@ -306,6 +282,7 @@ contains
 
             ! initial conditions
             this%init_state = 0.
+            this%controls = 0.
 
             call jsonx_get(this%j_vehicle, "initial.airspeed[ft/s]",  this%init_V)
             call jsonx_get(this%j_vehicle, "initial.altitude[ft]",  this%init_alt)
@@ -348,57 +325,6 @@ contains
         ! call graphics%init(j_graphics)
         
     end subroutine vehicle_init
-
-
-    subroutine init_control(this, j_control, ID)
-        implicit none
-        type(vehicle_type) :: this
-        type(json_value), pointer :: j_control
-        integer :: ID
-
-        call jsonx_get(j_control, 'name', this%controls(ID)%name)
-        write(*,*) "        reading control effector: ", this%controls(ID)%name 
-        
-        if (this%controls(ID)%name == "aileron") this%aileron_ID = ID + 13
-        if (this%controls(ID)%name == "elevator") this%elevator_ID = ID + 13 
-        if (this%controls(ID)%name == "rudder") this%rudder_ID = ID + 13 
-        if (this%controls(ID)%name == "throttle") this%throttle_ID = ID + 13 
-        
-        call jsonx_get(j_control, "dynamics_order", this%controls(ID)%dynamics_order, 0)
-        call jsonx_get(j_control, "units", this%controls(ID)%units, "none")
-        if (this%controls(ID)%units == "deg") then
-            this%controls(ID)%display_units = 180.0/PI
-        else 
-            this%controls(ID)%display_units = 1.0
-        end if
-
-        call jsonx_get(j_control, "magnitude_limits", this%controls(ID)%mag_limit, 0.0, 2)
-        this%controls(ID)%mag_limit(:) = this%controls(ID)%mag_limit(:)/this%controls(ID)%display_units
-        
-        ! first order actuator dynamics inputs
-        if (this%controls(ID)%dynamics_order == 1) then
-            call jsonx_get(j_control, "rate_limits[/s]", this%controls(ID)%rate_limit, 0.0, 2)
-            this%controls(ID)%rate_limit(:) = this%controls(ID)%rate_limit(:)/this%controls(ID)%display_units
-            
-            call jsonx_get(j_control, "time_constant[s]", this%controls(ID)%time_constant)
-        end if
-        
-        if (this%controls(ID)%dynamics_order == 2) then
-            call jsonx_get(j_control, "rate_limits[/s]", this%controls(ID)%rate_limit, 0.0, 2)
-            this%controls(ID)%rate_limit(:) = this%controls(ID)%rate_limit(:)/this%controls(ID)%display_units
-            
-            call jsonx_get(j_control, "acceleration_limits[/s^2]", this%controls(ID)%accel_limit, 0.0, 2)
-            this%controls(ID)%accel_limit(:) = this%controls(ID)%accel_limit(:)/this%controls(ID)%display_units
-            
-            call jsonx_get(j_control, "natural_frequency[rad/s]", this%controls(ID)%nat_freq)
-            call jsonx_get(j_control, "damping_ratio", this%controls(ID)%damp_ratio)
-            
-        end if 
-        
-        this%controls(ID)%state_ID = 13 + ID
-        this%controls(ID)%commanded_value = 0.0
-        
-    end subroutine init_control
     
     
     subroutine init_to_state(this)
@@ -406,9 +332,7 @@ contains
         implicit none
         type(vehicle_type) :: this 
         real :: alpha0, beta0
-        real, allocatable, dimension(:) :: temp_controls
-        integer :: i 
-
+        
         this%trimming = .false.
         
         call jsonx_get(this%j_vehicle, "initial.state.angle_of_attack[deg]", alpha0)
@@ -427,17 +351,15 @@ contains
         this%init_state(5) = this%init_state(5)*PI/180. ! q
         this%init_state(6) = this%init_state(6)*PI/180. ! r
         
+        call jsonx_get(this%j_vehicle, "initial.state.aileron[deg]",  this%controls(1), 0.0)
+        call jsonx_get(this%j_vehicle, "initial.state.elevator[deg]",  this%controls(2), 0.0)
+        call jsonx_get(this%j_vehicle, "initial.state.rudder[deg]",  this%controls(3), 0.0)
+        call jsonx_get(this%j_vehicle, "initial.state.throttle",  this%controls(4), 0.0)
+        this%controls(1) = this%controls(1)*PI/180. ! da
+        this%controls(2) = this%controls(2)*PI/180. ! de    
+        this%controls(3) = this%controls(3)*PI/180. ! dr
+
         this%init_state(10:13) = euler_to_quat(this%init_eul)
-     
-        
-        if (this%type == "aircraft") then
-            call jsonx_get(this%j_vehicle, "initial.state.controls", temp_controls, 0.0, 4)    
-            do i=1,4
-                this%init_state(i+13) = temp_controls(i)/this%controls(i)%display_units
-                this%controls(i)%commanded_value = this%init_state(i+13)
-            end do    
-        end if
-        
 
     end subroutine init_to_state
 
@@ -455,7 +377,6 @@ contains
         real, allocatable :: R(:), R_neg(:), R_up(:), R_dn(:), jac(:,:), x(:), dx(:)
         
         this%trimming = .true.
-        this%limit_controls = .false.
         
         write(*,*) ""
         write(*,*) "---------- Initializing with a Trim State ------------ "
@@ -655,10 +576,8 @@ contains
             
         end do
         
-        do i=1,4
-            this%controls(i)%commanded_value = this%init_state(13+i)
-        end do
-
+        this%controls = x(3:6)
+        
         write(*,*) ""
         write(*,*) "       Trim Toleerance =  ", trim_tol
         write(*,*) "     Relaxation Factor =  ", relaxation
@@ -678,10 +597,10 @@ contains
         write(*,'(A, 1(1x,ES22.14))') "                   q[deg/s] = ", this%init_state(5)*180./pi
         write(*,'(A, 1(1x,ES22.14))') "                   r[deg/s] = ", this%init_state(6)*180./pi
         write(*,*)"" 
-        write(*,'(5A, 1(1x,ES22.14))') "               ", this%controls(1)%name, "[",this%controls(1)%units, "] = ", this%init_state(14)*this%controls(1)%display_units
-        write(*,'(5A, 1(1x,ES22.14))') "              ", this%controls(2)%name, "[",this%controls(2)%units, "] = ", this%init_state(15)*this%controls(2)%display_units
-        write(*,'(5A, 1(1x,ES22.14))') "                ", this%controls(3)%name, "[",this%controls(3)%units, "] = ", this%init_state(16)*this%controls(3)%display_units
-        write(*,'(5A, 1(1x,ES22.14))') "             ", this%controls(4)%name, "[",this%controls(4)%units, "] = ", this%init_state(17)*this%controls(4)%display_units
+        write(*,'(A, 1(1x,ES22.14))') "                    da[deg] = ", this%controls(1)*180./pi
+        write(*,'(A, 1(1x,ES22.14))') "                    de[deg] = ", this%controls(2)*180./pi
+        write(*,'(A, 1(1x,ES22.14))') "                    dr[deg] = ", this%controls(3)*180./pi
+        write(*,'(A, 1(1x,ES22.14))') "                   throttle = ", this%controls(4)
         write(*,*)"" 
         write(*,'(A, 1(1x,ES22.14))') "                   phi[deg] = ", x(7)*180./pi
         write(*,'(A, 1(1x,ES22.14))') "                 theta[deg] = ", x(8)*180./pi
@@ -701,7 +620,6 @@ contains
         
         
         this%trimming = .false.
-        this%limit_controls = .true.
     
     end subroutine init_to_trim
 
@@ -711,7 +629,7 @@ contains
         type(vehicle_type) :: this
         real, intent(in) :: x(9)
         integer, intent(in) :: n_free
-        real :: dydt(21), R(n_free), xyzdot(3), FM(6)
+        real :: dydt(13), R(n_free), xyzdot(3), FM(6)
         real :: ca, sa, cb, sb, cp, sp, ct, st 
         real :: u, v, w, V0, grav, ac
         real :: c1, pw
@@ -731,10 +649,7 @@ contains
         v = V0*sb
         w = V0*sa*cb
         
-        this%init_state(14) = x(3)
-        this%init_state(15) = x(4)
-        this%init_state(16) = x(5)
-        this%init_state(17) = x(6)
+        this%controls = x(3:6)
 
         ! build state for diff eq
         this%init_state(1) = u
@@ -796,7 +711,7 @@ contains
 
     ! function calc_load_factor(y) result(ans)
     !     implicit none
-    !     real, dimension(21) :: y
+    !     real, dimension(13) :: y
     !     real :: ans 
     !     real, dimension(3) :: xyzdot
     !     real :: Vmag 
@@ -809,7 +724,7 @@ contains
 
     function calc_fixed_climb_angle(y) result(ans)
         implicit none
-        real, dimension(21) :: y
+        real, dimension(13) :: y
         real :: ans 
         real, dimension(3) :: xyzdot
         real :: Vmag 
@@ -821,7 +736,7 @@ contains
 
     function calc_relative_climb_angle(y) result(ans)
         implicit none
-        real, dimension(21) :: y
+        real, dimension(13) :: y
         real :: ans 
         real, dimension(3) :: xyzdot
         real :: Vmag 
@@ -836,7 +751,7 @@ contains
     function pseudo_aero(this, y) result(FM)
         implicit none
         type(vehicle_type) :: this
-        real, dimension(21) :: y
+        real, dimension(13) :: y
         real, dimension(6) :: FM
         real :: u, v, w, p, q, r, xf, yf, zf, phi, theta, psi, alpha, alpha_hat, beta, beta_f, V_mag
         real :: CL1, CL, CS, CD, C_l, Cm, Cn, Reynolds
@@ -846,7 +761,7 @@ contains
         real :: FTx, FTy, FTz, MTx, MTy, MTz
 
         if (verbose2 .and. .not. this%trimming) then
-            write(*, '(A, 21(1x,ES20.12))')" state coming in = ", y
+            write(*, '(A, 13(1x,ES20.12))')" state coming in = ", y
         end if
         
         ! make dummy variables for readibility
@@ -859,6 +774,11 @@ contains
         xf = y(7) 
         yf = y(8)
         zf = y(9)
+
+        da = this%controls(1)
+        de = this%controls(2)
+        dr = this%controls(3)
+        tau = this%controls(4)
 
         V_mag = sqrt(u*u + v*v + w*w)
         ! calculate alpha, V
@@ -912,21 +832,7 @@ contains
             Cn = -this%Cma*beta_f + this%Cmqbar*rbar
         end if
 
-        if (this%type == "aircraft") then        
-            if (this%limit_controls) then
-                ! write(*,*) "limit_controls"
-                da  = max(this%controls(1)%mag_limit(1), min(this%controls(1)%mag_limit(2), y(this%aileron_ID)))
-                de  = max(this%controls(2)%mag_limit(1), min(this%controls(2)%mag_limit(2), y(this%elevator_ID)))
-                dr  = max(this%controls(3)%mag_limit(1), min(this%controls(3)%mag_limit(2), y(this%rudder_ID)))
-                tau = max(this%controls(4)%mag_limit(1), min(this%controls(4)%mag_limit(2), y(this%throttle_ID)))
-                ! write(*,*) "de = ", de*this%controls(2)%display_units
-            else
-                da  = y(this%aileron_ID)
-                de  = y(this%elevator_ID)
-                dr  = y(this%rudder_ID)
-                tau = y(this%throttle_ID)
-
-            end if
+        if (this%type == "aircraft") then           
             ! calc forces
             CL1 = this%CL0 + this%CLa*alpha
             CL = CL1 + this%CLqbar*qbar + this%CLahat*alpha_hat + this%CLde*de 
@@ -1021,10 +927,10 @@ contains
             write(*,*) "Cm = ", Cm
             write(*,*) "Cn = ", Cn
             write(*,*) "rho0 = ", this%rho0
-            ! write(*,*) "da [deg] = ", this%controls(1)*180./pi
-            ! write(*,*) "de [deg] = ", this%controls(2)*180./pi
-            ! write(*,*) "dr [deg] = ", this%controls(3)*180./pi
-            ! write(*,*) "throttle = ", this%controls(4)
+            write(*,*) "da [deg] = ", this%controls(1)*180./pi
+            write(*,*) "de [deg] = ", this%controls(2)*180./pi
+            write(*,*) "dr [deg] = ", this%controls(3)*180./pi
+            write(*,*) "throttle = ", this%controls(4)
 
             write(*,*) ""
             write(*,*) "Forces and moments due to thrust"
@@ -1090,8 +996,6 @@ contains
         real :: Ixx, Iyy, Izz, Ixz, Ixy, Iyz
         real, dimension(4) :: quat_A, quat_B, quat_AB, quat_xyz
         real, dimension(3) :: hpqr, pqr_dot_stuff, pqr_dot
-        integer :: i 
-        real :: delta, d_delta, dd_delta, wn, zeta
 
         
         
@@ -1111,10 +1015,10 @@ contains
         ! limit actuator values here
 
         
-        FM = pseudo_aero(this, y) ! controls are limited in pseudo_aero
+        FM = pseudo_aero(this, y)
 
         if (rk4_verbose .and. .not. this%trimming) then
-            write(*, '(A, 21(ES20.12))')"     state vector coming in = ", y
+            write(*, '(A, 13(ES20.12))')"     state vector coming in = ", y
             write(*, '(A,  6(ES20.12))')"          pseudo aero (F,M) = ", FM
         end if
 
@@ -1181,74 +1085,10 @@ contains
         dydt(12) = 0.5*( ez*p + e0*q - ex*r) ! ey dot
         dydt(13) = 0.5*(-ey*p + ex*q + e0*r) ! ez dot
 
-
-        do i=1,4
-            delta = y(13+i)
-            d_delta = y(17+i)
-            delta = max(this%controls(i)%mag_limit(1), min(this%controls(i)%mag_limit(2), delta))
-            
-            select case(this%controls(i)%dynamics_order)
-            case(0) ! no actuator dynamics
-                
-                d_delta = 0.0
-                dd_delta = 0.0
-                
-            case(1) ! first order actuator dynamics
-                ! if (i == 2) write(*,*) " first order, i = 2 "
-                d_delta = (this%controls(i)%commanded_value - delta)/this%controls(i)%time_constant
-                ! if (i == 2) write(*,*) " commanded =  ", this%controls(i)%commanded_value 
-                ! if (i == 2) write(*,*) " numerator = ", (this%controls(i)%commanded_value - delta)
-                ! if (i == 2) write(*,*) " denominator = ", this%controls(i)%time_constant
-                ! if (i == 2) write(*,*) " delta = ", delta
-                ! if (i == 2) write(*,*) " d_delta = ", d_delta
-                d_delta = max(this%controls(i)%rate_limit(1), min(this%controls(i)%rate_limit(2), d_delta))
-                
-                ! limit rate if moving against a magnitude limit
-                if (delta <= this%controls(i)%mag_limit(1) + TOLERANCE .and. d_delta < 0.0) d_delta = 0.0
-                if (delta >= this%controls(i)%mag_limit(2) - TOLERANCE .and. d_delta > 0.0) d_delta = 0.0
-                dd_delta = 0.0
-                
-            case(2) ! second order actuator dynamcis
-                ! if (i==1) write(*,*)" case2"
-                wn = this%controls(i)%nat_freq
-                zeta = this%controls(i)%damp_ratio
-                ! if (i==1) write(*,*)" wn = ", wn
-                ! if (i==1) write(*,*)" zeta = ", zeta
-                d_delta = max(this%controls(i)%rate_limit(1), min(this%controls(i)%rate_limit(2), d_delta))
-                ! if (i==1) write(*,*)"commanded = ", this%controls(i)%commanded_value
-                ! if (i==1) write(*,*)"    delta = ", delta
-                ! if (i==1) write(*,*)"  d_delta = ", d_delta
-                
-                ! limit rate if moving against a magnitude limit
-                if (delta <= this%controls(i)%mag_limit(1) + TOLERANCE .and. d_delta < 0.0) d_delta = 0.0
-                if (delta >= this%controls(i)%mag_limit(2) - TOLERANCE .and. d_delta > 0.0) d_delta = 0.0
-                
-                dd_delta = wn**2*(this%controls(i)%commanded_value - delta) - 2.0*zeta*wn*d_delta
-                dd_delta = max(this%controls(i)%accel_limit(1), min(this%controls(i)%accel_limit(2), dd_delta))
-                ! if (i==1) write(*,*)" before limit dd_delta = ", dd_delta
-                
-                ! limit accel if moving against a rate limit
-                if (d_delta <= this%controls(i)%rate_limit(1) + TOLERANCE .and. dd_delta < 0.0) dd_delta = 0.0
-                if (d_delta >= this%controls(i)%rate_limit(2) - TOLERANCE .and. dd_delta > 0.0) dd_delta = 0.0
-                ! limit accel if moving against a mag limit
-                if (delta <= this%controls(i)%mag_limit(1) + TOLERANCE .and. this%controls(i)%commanded_value < this%controls(i)%mag_limit(1)) dd_delta = 0.0
-                if (delta >= this%controls(i)%mag_limit(2) - TOLERANCE .and. this%controls(i)%commanded_value > this%controls(i)%mag_limit(2)) dd_delta = 0.0
-                
-                ! if (i==1) write(*,*)"             dd_delta = ", dd_delta
-            end select
-
-            dydt(13+i) = d_delta
-            ! if (i == 2) write(*,*) " dydt elevator = ", dydt(13+i)
-            dydt(17+i) = dd_delta
-
-        end do
-
         if (rk4_verbose .and. .not. this%trimming) then
-            write(*, '(A, 21(ES20.12))')"                    diff eq = ", dydt
+            write(*, '(A, 13(ES20.12))')"                    diff eq = ", dydt
             write(*,*)""
         end if
-
-
     end function diff_eq
 
 
@@ -1268,6 +1108,7 @@ contains
             write(*, '(A, (ES20.12))')"                       time = ", t0
         end if
         k1 = diff_eq(this, y)
+
 
         ! k2:  
         if (rk4_verbose) then
@@ -1302,21 +1143,12 @@ contains
         
         type(vehicle_type) :: this
         real, intent(in) :: time, dt
-        real, dimension(21) :: y, y_next
-        integer :: i 
-
-
+        real, dimension(13) :: y, y_next
+        
         y = this%state
 
         y_next = rk4(this, time, y, dt)
-
-        ! write(*,*)"elevator = ", y_next(15)*this%controls(2)%display_units
         
-        do i=1,4 ! limit control magnitudes and rates
-            y_next(13+i) = max(this%controls(i)%mag_limit(1), min(this%controls(i)%mag_limit(2), y_next(13+i)))
-            y_next(17+i) = max(this%controls(i)%rate_limit(1), min(this%controls(i)%rate_limit(2), y_next(17+i)))
-        end do
-
         this%state = y_next
 
         if (geographic_model_ID > 0) call update_geographic(this, y, y_next)
@@ -1336,7 +1168,7 @@ contains
         if (verbose2) then
             write(*,*)
             write(*, '(A, (1x,ES20.12))') "           time = ", time
-            write(*, '(A, 21(1x,ES20.12))')"          state  = ", y_next
+            write(*, '(A, 13(1x,ES20.12))')"          state  = ", y_next
             write(*,*) ""
         end if
             
@@ -1346,7 +1178,7 @@ contains
     subroutine update_geographic(this, y1, y2)
         implicit none
         type(vehicle_type) :: this
-        real, dimension(21), intent(in) :: y1, y2
+        real, dimension(13), intent(in) :: y1, y2
         real :: dx, dy, dz, d
         real :: H, Phi1, Theta, Psi1, psi_g1
         real :: cPhi, sPhi, cTheta, sTheta, cpsi_g1, spsi_g1 
@@ -1411,6 +1243,9 @@ contains
             this%longitude_deg = this%longitude*180.0/PI
         end if
 
+        
+
+
     end subroutine update_geographic
 
 
@@ -1418,7 +1253,7 @@ contains
         implicit none
         type(vehicle_type) :: this
         real, intent(in) :: time
-        real, dimension(21), intent(in) :: y
+        real, dimension(13), intent(in) :: y
     end subroutine vehicle_write_state
 
 end module vehicle_m

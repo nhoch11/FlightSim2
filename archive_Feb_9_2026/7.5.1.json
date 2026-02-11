@@ -1,7 +1,8 @@
 {
     "simulation" : {
         "time_step[s]" : 0.0015,
-        "end_time[s]" : 0.02,
+        "end_time[s]" : 20000,
+        "print_rate" : 100000,
         "gravity_relief": true,
         "save_states" : false,
         "verbose" : true,
@@ -215,15 +216,15 @@
                     "throttle" : 0.4
                 },
                 "trim" : {
-                    "type" : "shss",
+                    "type" : "sct",
                     "relative_climb_angle[deg]" : 0.0,
                     "_sideslip_angle[deg]" : -10.0,
                     "_load_factor" : 1.0,
                     "solver" : {
                         "finite_difference_step_size" : 0.01,
                         "relaxation_factor" : 0.9,
-                        "tolerance" : 1.0e-13,
-                        "max_iterations" : 20,
+                        "tolerance" : 1.0e-14,
+                        "max_iterations" : 100,
                         "verbose" : false
                     }
                 }

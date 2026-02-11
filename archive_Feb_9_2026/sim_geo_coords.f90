@@ -26,9 +26,7 @@ module sim_m
         headers = [character(len=20) :: &
         " time[s]", " dt[s]", " u[ft/s]", " v[ft/s]", " w[ft/s]", &
         " p[rad/s]", " q[rad/s]", " r[rad/s]", " x[ft]", " y[ft]", " z[ft]",  &
-        " e0", " ex", " ey", " ez", &
-        " aileron", " elevator", " rudder", " throttle",&
-        " d_aileron", " d_elevator", " d_rudder", " d_throttle"]
+        " e0", " ex", " ey", " ez"]
         
         write(*,*) "Initializing Simulation..."       
         ! read json file and get all simulation parameters 
@@ -123,23 +121,14 @@ module sim_m
             end do
         end if 
         
-
-        ! write to terminal, FIRST LINE
+        ! write to screen
         if (verbose) then
             ! write(*, '(*(A16))') headers
             write(*,*) ""
-            write(*,'(A20, *(A20))') "vehicle name   ", headers
+            write(*,'(*(A20))') "vehicle name", headers
             do i=1,num_vehicles
                 if (vehicles(i)%run_physics) then
-                    write(*,'(A19, *(ES20.12))', advance='no') vehicles(i)%name, time, dt, vehicles(i)%state(1:13), &
-                        vehicles(i)%state(14)*vehicles(i)%controls(1)%display_units, &
-                        vehicles(i)%state(15)*vehicles(i)%controls(2)%display_units, &
-                        vehicles(i)%state(16)*vehicles(i)%controls(3)%display_units, &
-                        vehicles(i)%state(17)*vehicles(i)%controls(4)%display_units, &
-                        vehicles(i)%state(18)*vehicles(i)%controls(1)%display_units, &
-                        vehicles(i)%state(19)*vehicles(i)%controls(2)%display_units, &
-                        vehicles(i)%state(20)*vehicles(i)%controls(3)%display_units, &
-                        vehicles(i)%state(21)*vehicles(i)%controls(4)%display_units
+                    write(*,'(A19, *(ES20.12))', advance='no') vehicles(i)%name, time, dt, vehicles(i)%state(:)
                     if (geographic_model_ID>0) then
                         vehicles(i)%azimuth_deg = vehicles(i)%init_eul(3)*180.0/PI
                         write(*,'(*(ES20.12))', advance='no') vehicles(i)%latitude_deg, vehicles(i)%longitude_deg, vehicles(i)%azimuth_deg
@@ -153,15 +142,6 @@ module sim_m
         cpu_start_time = get_time()
         time1 = cpu_start_time
         integrated_time = 0.0
-
-        
-        ! for 10.2.2 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!111
-        vehicles(1)%controls(1)%commanded_value = 0.0
-        vehicles(1)%controls(2)%commanded_value = 0.0
-        vehicles(1)%controls(3)%commanded_value = 0.0
-        vehicles(1)%controls(4)%commanded_value = 0.0
-        ! for 10.2.2 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!111
-
 
         do while (time <= tf)
             ! tick each vehicle forward one step
@@ -178,15 +158,7 @@ module sim_m
             if (verbose .and. (modulo(istep, print_rate) == 0)) then
                 do i=1,num_vehicles
                     if (vehicles(i)%run_physics) then
-                        write(*,'(A19, *(ES20.12))', advance='no') vehicles(i)%name, time, dt, vehicles(i)%state(1:13), &
-                        vehicles(i)%state(14)*vehicles(i)%controls(1)%display_units, &
-                        vehicles(i)%state(15)*vehicles(i)%controls(2)%display_units, &
-                        vehicles(i)%state(16)*vehicles(i)%controls(3)%display_units, &
-                        vehicles(i)%state(17)*vehicles(i)%controls(4)%display_units, &
-                        vehicles(i)%state(18)*vehicles(i)%controls(1)%display_units, &
-                        vehicles(i)%state(19)*vehicles(i)%controls(2)%display_units, &
-                        vehicles(i)%state(20)*vehicles(i)%controls(3)%display_units, &
-                        vehicles(i)%state(21)*vehicles(i)%controls(4)%display_units
+                        write(*,'(A19, *(ES20.12))', advance='no') vehicles(i)%name, time, dt, vehicles(i)%state(:)
                         if (geographic_model_ID>0) then
                             eul = quat_to_euler(vehicles(i)%state(10:13))
                             vehicles(i)%azimuth_deg = eul(3)*180.0/PI                            

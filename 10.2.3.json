@@ -1,102 +1,16 @@
 {
     "simulation" : {
         "time_step[s]" : 0.01,
-        "end_time[s]" : 0.02,
+        "end_time[s]" : 1.0,
+        "print_rate" : 1,
         "gravity_relief": true,
         "save_states" : false,
         "verbose" : true,
         "verbose2" : false,
         "rk4_verbose" : false,
-        "geographic_model" : "sphere"
+        "geographic_model" : "none"
     },
     "vehicles" : {
-        "ping-pong-ball" : {
-            "type" : "false",
-            "run_physics" : false,
-            "mass" : {
-                "weight[lbf]" : 0.006,
-                "Ixx[slug-ft^2]" : 5.215657263284e-7,
-                "Iyy[slug-ft^2]" : 5.215657263284e-7,
-                "Izz[slug-ft^2]" : 5.215657263284e-7
-            },
-            "aerodynamics" : {
-                "reference" : {
-                    "area[ft^2]" : 0.013445314097247,
-                    "longitudinal_length[ft]" : 0.06542,
-                    "lateral_length[ft]" : 0.06542
-                }
-            },
-            "thrust" : {},
-            "initial" : {
-                "airspeed[ft/s]" : 50.0,
-                "altitude[ft]" : 300.0,
-                "latitude[deg]" : 0.0,
-                "longitude[deg]" : 0.0,
-                "Euler_angles[deg]" : [0.0, 0.0, 0.0],
-                "type" : "state",
-                "state" : {
-                    "angle_of_attack[deg]" : 0.0,
-                    "sideslip_angle[deg]" : 0.0,
-                    "p[deg/s]" : 0.0,
-                    "q[deg/s]" : 0.0,
-                    "r[deg/s]" : 0.0
-                }
-            }
-        },
-        "arrow" : {
-            "type" : "arrow",
-            "run_physics" : false,
-            "mass" : {
-                "weight[lbf]" : 0.0697,
-                "Ixx[slug-ft^2]" : 0.0000194,
-                "Iyy[slug-ft^2]" : 0.00097,
-                "Izz[slug-ft^2]" : 0.00097
-            },
-            "thrust" : {},
-            "aerodynamics" : {
-                "reference" : {
-                    "area[ft^2]" : 0.000218,
-                    "longitudinal_length[ft]" : 2.3,
-                    "lateral_length[ft]" : 2.3
-                },
-                "stall" : {
-                    "include_stall" : false
-                },
-                "coefficients" : {
-                    "CL" : {
-                        "alpha" : 4.929
-                    },
-                    "CD" : {
-                        "L0" : 5.096,
-                        "CL1_CL1" : 48.138
-                    },
-                    "Cl" : {
-                        "_0" : 0.0,
-                        "0" : 3.223,
-                        "pbar" : -5.378
-                    },
-                    "Cm" : {
-                        "alpha" : -2.605,
-                        "qbar" : -9.06
-                    }
-                }
-            },
-            "initial" : {
-                "airspeed[ft/s]" : 210.0,
-                "altitude[ft]" : 5.0,
-                "latitude[deg]" : 0.0,
-                "longitude[deg]" : 0.0,
-                "Euler_angles[deg]" : [0.0, 5.0, 0.0],
-                "type" : "state",
-                "state" : {
-                    "angle_of_attack[deg]" : 0.0,
-                    "sideslip_angle[deg]" : 0.0,
-                    "p[deg/s]" : 0.0,
-                    "q[deg/s]" : 0.0,
-                    "r[deg/s]" : 0.0
-                }
-            }
-        },
         "F16" : {
             "type" : "aircraft",
             "run_physics" : true,
@@ -196,12 +110,58 @@
                     }
                 }
             },
+            "control_effectors" : {
+                "1" : {
+                    "name" : "aileron",
+                    "units" : "deg",
+                    "dynamics_order" : 1,
+                    "magnitude_limits" : [-21.5, 21.5],
+                    "rate_limits[/s]" : [-80.0, 80.0],
+                    "acceleration_limits[/s^2]" : [-1000.0, 1000.0],
+                    "time_constant[s]" : 0.05,
+                    "natural_frequency[rad/s]" : 20.0,
+                    "damping_ratio" : 0.7
+                },
+                "2" : {
+                    "name" : "elevator",
+                    "units" : "deg",
+                    "dynamics_order" : 1,
+                    "magnitude_limits" : [-25.0, 25.0],
+                    "rate_limits[/s]" : [-60.0, 60.0],
+                    "acceleration_limits[/s^2]" : [-1000.0, 1000.0],
+                    "time_constant[s]" : 0.05,
+                    "natural_frequency[rad/s]" : 20.0,
+                    "damping_ratio" : 0.7
+                },
+                "3" : {
+                    "name" : "rudder",
+                    "units" : "deg",
+                    "dynamics_order" : 1,
+                    "magnitude_limits" : [-30.0, 30.0],
+                    "rate_limits[/s]" : [-120.0, 120.0],
+                    "acceleration_limits[/s^2]" : [-1000.0, 1000.0],
+                    "time_constant[s]" : 0.05,
+                    "natural_frequency[rad/s]" : 20.0,
+                    "damping_ratio" : 0.7
+                },
+                "4" : {
+                    "name" : "throttle",
+                    "dynamics_order" : 1,
+                    "magnitude_limits" : [0.0, 1.0],
+                    "rate_limits[/s]" : [-1.0, 1.0],
+                    "acceleration_limits[/s^2]" : [-1.0, 1.0],
+                    "time_constant[s]" : 3.0,
+                    "natural_frequency[rad/s]" : 1.5,
+                    "damping_ratio" : 1.0
+                }
+
+            },
             "initial" : {
-                "airspeed[ft/s]" : 1000,
-                "altitude[ft]" : 56644.1214783759,
+                "airspeed[ft/s]" : 500.0,
+                "altitude[ft]" : 10000.0,
                 "latitude[deg]" : 0.0,
                 "longitude[deg]" : 0.0,
-                "Euler_angles[deg]" : [0.0, 0.0, 45.0],
+                "Euler_angles[deg]" : [40.0, 0.0, 0.0],
                 "type" : "trim",
                 "state" : {
                     "angle_of_attack[deg]" : 0.0,
@@ -209,21 +169,18 @@
                     "p[deg/s]" : 0.0,
                     "q[deg/s]" : 0.0,
                     "r[deg/s]" : 0.0,
-                    "aileron[deg]" : 0.0,
-                    "elevator[deg]" : -25.0,
-                    "rudder[deg]" : 0.0,
-                    "throttle" : 0.4
+                    "controls" : [0.0, -9.439213266902, 0.0, 0.074041048286]
                 },
                 "trim" : {
                     "type" : "shss",
-                    "relative_climb_angle[deg]" : 0.0,
+                    "relative_climb_angle[deg]" : 45.0,
                     "_sideslip_angle[deg]" : -10.0,
-                    "_load_factor" : 1.0,
+                    "_load_factor" : 1.2,
                     "solver" : {
                         "finite_difference_step_size" : 0.01,
-                        "relaxation_factor" : 0.9,
-                        "tolerance" : 1.0e-13,
-                        "max_iterations" : 20,
+                        "relaxation_factor" : 0.99,
+                        "tolerance" : 1.0e-14,
+                        "max_iterations" : 1000,
                         "verbose" : false
                     }
                 }

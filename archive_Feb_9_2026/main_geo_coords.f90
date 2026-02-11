@@ -16,7 +16,7 @@ program main
     call system_clock(start_count, count_rate_main)
 
     ! call init("input_physics.json")
-    call init("10.3.2.json")
+    call init("7.C15.json")
     ! call init("combined.json")
     call run()
     

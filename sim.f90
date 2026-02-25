@@ -1,6 +1,7 @@
 module sim_m
 
     use vehicle_m
+    use micro_time_m
     use jsonx_m
 
     implicit none
@@ -155,12 +156,12 @@ module sim_m
         integrated_time = 0.0
 
         
-        ! for 10.2.2 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!111
-        vehicles(1)%controls(1)%commanded_value = 0.0
-        vehicles(1)%controls(2)%commanded_value = 0.0
-        vehicles(1)%controls(3)%commanded_value = 0.0
-        vehicles(1)%controls(4)%commanded_value = 0.0
-        ! for 10.2.2 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!111
+        ! ! for 10.2.2 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!111
+        ! vehicles(1)%controls(1)%set_point = 0.0
+        ! vehicles(1)%controls(2)%set_point = 0.0
+        ! vehicles(1)%controls(3)%set_point = 0.0
+        ! vehicles(1)%controls(4)%set_point = 0.0
+        ! ! for 10.2.2 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!111
 
 
         do while (time <= tf)

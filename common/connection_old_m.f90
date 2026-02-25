@@ -3,7 +3,6 @@ module connection_m
     use iso_c_binding
     use jsonx_m
     use database_m, only: database, new_database, char_length, int2str
-    ! use io_m, only: zTimer
     implicit none
     
     
@@ -72,7 +71,7 @@ module connection_m
         ! real, allocatable :: vals(:)
         class(channel), allocatable :: ch
         ! type(zTimer) :: refresh
-        real :: refresh_time, time, duration
+        real :: refresh_time, time
         ! logical :: only_send
     contains
         procedure :: init          => connection_init
@@ -91,8 +90,7 @@ contains
         character(len=:), allocatable :: char_temp
         
         if (present(n)) then
-            call jsonx_get(p, 'number_of_values', t%n, n)
-            ! t%n = n
+            t%n = n
         else
             call jsonx_get(p, 'number_of_values', t%n)
         end if
@@ -337,11 +335,10 @@ contains
     
     !! connection ======================================================
     
-    subroutine connection_init(t, p, n, time)
+    subroutine connection_init(t, p, n)
         class(connection), intent(out) :: t
         type(json_value), pointer, intent(in) :: p
         integer, intent(in), optional :: n
-        real, optional, intent(in) :: time
         
         real :: refresh_rate
         
@@ -359,21 +356,16 @@ contains
         ! call t%refresh%init()
         ! t%refresh%lapTime = t%refresh%startTime-t%refresh_time    !! guarantees the first call will trigger a send/recv
         
-        if(present(time)) then
-            t%time = 0.0
-        else
-            call cpu_time(t%time)
-        end if
+        call cpu_time(t%time)
         t%time = t%time - t%refresh_time
         
     end subroutine connection_init
     
-    subroutine connection_send(t, vals, time)
+    subroutine connection_send(t, vals)
         class(connection), intent(inout) :: t
         real, intent(in) :: vals(t%ch%n)
-        real, optional, intent(in) :: time
         
-        if (t%check_refresh(time)) then
+        if (t%check_refresh()) then
             call t%ch%send(vals)
             ! t%refresh%lapTime = t%refresh%lapTime + t%refresh_time
             t%time = t%time + t%refresh_time
@@ -381,13 +373,12 @@ contains
         
     end subroutine connection_send
     
-    function   connection_recv(t, x, time) result(vals)
+    function   connection_recv(t, x) result(vals)
         class(connection), intent(inout) :: t
         real, intent(in), optional :: x(:)
-        real, optional, intent(in) :: time
         real :: vals(t%ch%n)
         
-        if (t%check_refresh(time)) then
+        if (t%check_refresh()) then
             vals = t%ch%recv(x)
             ! t%refresh%lapTime = t%refresh%lapTime + t%refresh_time
             t%time = t%time + t%refresh_time
@@ -397,18 +388,13 @@ contains
         
     end function connection_recv
     
-    function   connection_check_refresh(t,time) result(flag)
+    function   connection_check_refresh(t) result(flag)
         class(connection), intent(in) :: t
-        real, optional, intent(in) :: time
         logical :: flag
         real :: current
         ! flag = t%refresh%getLapTimeSeconds() >= t%refresh_time
-        if(present(time)) then
-            current = time
-        else
-            call cpu_time(current)
-        end if
-        flag = current - t%time >= (t%refresh_time - 1.0e-10)
+        call cpu_time(current)
+        flag = current - t%time >= t%refresh_time
     end function connection_check_refresh
     
 end module connection_m

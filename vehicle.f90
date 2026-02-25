@@ -1,10 +1,9 @@
 module vehicle_m
-    use hoch_m
-    use jsonx_m
-    use micro_time_m
-    use linalg_mod
-    use connection_m
-    ! use json_xtnsn_mod
+    ! use hoch_m
+    ! use jsonx_m
+    ! use linalg_mod
+    ! use connection_m
+    use controller_m
     
     implicit none
 
@@ -30,7 +29,7 @@ module vehicle_m
         character(len=:), allocatable :: name
         character(len=:), allocatable :: units
         integer :: dynamics_order, state_ID
-        real :: commanded_value
+        real :: set_point
         real, allocatable, dimension(:) :: mag_limit, rate_limit, accel_limit
         real :: time_constant, nat_freq, damp_ratio
         real :: display_units = 1.0
@@ -88,6 +87,7 @@ module vehicle_m
         real :: latitude, longitude, latitude_deg, longitude_deg, azimuth_deg
 
         type(trim_settings_type) :: trim
+        type(controller_type) :: controller
 
         
         ! old misc settings
@@ -102,10 +102,11 @@ contains
     subroutine vehicle_init(this, vehicle_json)
         implicit none
         type(vehicle_type) :: this 
-        type(json_value), pointer :: vehicle_json, j_control, j_control_temp
+        type(json_value), pointer :: vehicle_json, j_control, j_control_temp, j_controller
         real, dimension(:), allocatable :: thrust_orientation, hxyz
         real :: det
         real :: junk1, junk2, junk3, junk4, junk5
+        logical :: found
 
         this%j_vehicle => vehicle_json
         this%name = this%j_vehicle%name
@@ -264,7 +265,12 @@ contains
                 call init_control(this, j_control_temp, 3)
                 call jsonx_get(j_control, "4", j_control_temp)
                 call init_control(this, j_control_temp, 4)
-                
+
+                call json_get(this%j_vehicle, "controller", j_controller, found)
+                if (found) then
+                    if (verbose) write(*,*) '     - controller'
+                    call controller_init(this%controller, j_controller)
+                end if
 
             end if
 
@@ -339,6 +345,7 @@ contains
                 call vehicle_write_state(this, 0.0, this%state)
             end if
             
+            call get_controller_input(this, 0.0)
             
         end if ! run_physics
         
@@ -376,6 +383,11 @@ contains
         this%controls(ID)%mag_limit(:) = this%controls(ID)%mag_limit(:)/this%controls(ID)%display_units
         
         ! first order actuator dynamics inputs
+        if (this%controls(ID)%dynamics_order == 0) then
+            write(*,*) "     No actuator dynamics being modeled"
+        end if
+
+        ! first order actuator dynamics inputs
         if (this%controls(ID)%dynamics_order == 1) then
             call jsonx_get(j_control, "rate_limits[/s]", this%controls(ID)%rate_limit, 0.0, 2)
             this%controls(ID)%rate_limit(:) = this%controls(ID)%rate_limit(:)/this%controls(ID)%display_units
@@ -383,6 +395,7 @@ contains
             call jsonx_get(j_control, "time_constant[s]", this%controls(ID)%time_constant)
         end if
         
+        ! second order actuator dynamics inputs
         if (this%controls(ID)%dynamics_order == 2) then
             call jsonx_get(j_control, "rate_limits[/s]", this%controls(ID)%rate_limit, 0.0, 2)
             this%controls(ID)%rate_limit(:) = this%controls(ID)%rate_limit(:)/this%controls(ID)%display_units
@@ -396,7 +409,7 @@ contains
         end if 
         
         this%controls(ID)%state_ID = 13 + ID
-        this%controls(ID)%commanded_value = 0.0
+        this%controls(ID)%set_point = 0.0
         
     end subroutine init_control
     
@@ -434,7 +447,7 @@ contains
             call jsonx_get(this%j_vehicle, "initial.state.controls", temp_controls, 0.0, 4)    
             do i=1,4
                 this%init_state(i+13) = temp_controls(i)/this%controls(i)%display_units
-                this%controls(i)%commanded_value = this%init_state(i+13)
+                this%controls(i)%set_point = this%init_state(i+13)
             end do    
         end if
         
@@ -656,7 +669,7 @@ contains
         end do
         
         do i=1,4
-            this%controls(i)%commanded_value = this%init_state(13+i)
+            this%controls(i)%set_point = this%init_state(13+i)
         end do
 
         write(*,*) ""
@@ -830,7 +843,6 @@ contains
         Vmag = sqrt(y(1)**2 + y(2)**2 + y(3)**2)
         ans = asin(-xyzdot(3)/Vmag)
     end function calc_relative_climb_angle
-
 
 
     function pseudo_aero(this, y) result(FM)
@@ -1195,9 +1207,9 @@ contains
                 
             case(1) ! first order actuator dynamics
                 ! if (i == 2) write(*,*) " first order, i = 2 "
-                d_delta = (this%controls(i)%commanded_value - delta)/this%controls(i)%time_constant
-                ! if (i == 2) write(*,*) " commanded =  ", this%controls(i)%commanded_value 
-                ! if (i == 2) write(*,*) " numerator = ", (this%controls(i)%commanded_value - delta)
+                d_delta = (this%controls(i)%set_point - delta)/this%controls(i)%time_constant
+                ! if (i == 2) write(*,*) " commanded =  ", this%controls(i)%set_point 
+                ! if (i == 2) write(*,*) " numerator = ", (this%controls(i)%set_point - delta)
                 ! if (i == 2) write(*,*) " denominator = ", this%controls(i)%time_constant
                 ! if (i == 2) write(*,*) " delta = ", delta
                 ! if (i == 2) write(*,*) " d_delta = ", d_delta
@@ -1215,7 +1227,7 @@ contains
                 ! if (i==1) write(*,*)" wn = ", wn
                 ! if (i==1) write(*,*)" zeta = ", zeta
                 d_delta = max(this%controls(i)%rate_limit(1), min(this%controls(i)%rate_limit(2), d_delta))
-                ! if (i==1) write(*,*)"commanded = ", this%controls(i)%commanded_value
+                ! if (i==1) write(*,*)"commanded = ", this%controls(i)%set_point
                 ! if (i==1) write(*,*)"    delta = ", delta
                 ! if (i==1) write(*,*)"  d_delta = ", d_delta
                 
@@ -1223,7 +1235,7 @@ contains
                 if (delta <= this%controls(i)%mag_limit(1) + TOLERANCE .and. d_delta < 0.0) d_delta = 0.0
                 if (delta >= this%controls(i)%mag_limit(2) - TOLERANCE .and. d_delta > 0.0) d_delta = 0.0
                 
-                dd_delta = wn**2*(this%controls(i)%commanded_value - delta) - 2.0*zeta*wn*d_delta
+                dd_delta = wn**2*(this%controls(i)%set_point - delta) - 2.0*zeta*wn*d_delta
                 dd_delta = max(this%controls(i)%accel_limit(1), min(this%controls(i)%accel_limit(2), dd_delta))
                 ! if (i==1) write(*,*)" before limit dd_delta = ", dd_delta
                 
@@ -1231,8 +1243,8 @@ contains
                 if (d_delta <= this%controls(i)%rate_limit(1) + TOLERANCE .and. dd_delta < 0.0) dd_delta = 0.0
                 if (d_delta >= this%controls(i)%rate_limit(2) - TOLERANCE .and. dd_delta > 0.0) dd_delta = 0.0
                 ! limit accel if moving against a mag limit
-                if (delta <= this%controls(i)%mag_limit(1) + TOLERANCE .and. this%controls(i)%commanded_value < this%controls(i)%mag_limit(1)) dd_delta = 0.0
-                if (delta >= this%controls(i)%mag_limit(2) - TOLERANCE .and. this%controls(i)%commanded_value > this%controls(i)%mag_limit(2)) dd_delta = 0.0
+                if (delta <= this%controls(i)%mag_limit(1) + TOLERANCE .and. this%controls(i)%set_point < this%controls(i)%mag_limit(1)) dd_delta = 0.0
+                if (delta >= this%controls(i)%mag_limit(2) - TOLERANCE .and. this%controls(i)%set_point > this%controls(i)%mag_limit(2)) dd_delta = 0.0
                 
                 ! if (i==1) write(*,*)"             dd_delta = ", dd_delta
             end select
@@ -1305,17 +1317,19 @@ contains
         real, dimension(21) :: y, y_next
         integer :: i 
 
-
         y = this%state
-
+        
         y_next = rk4(this, time, y, dt)
-
+        
         ! write(*,*)"elevator = ", y_next(15)*this%controls(2)%display_units
         
         do i=1,4 ! limit control magnitudes and rates
             y_next(13+i) = max(this%controls(i)%mag_limit(1), min(this%controls(i)%mag_limit(2), y_next(13+i)))
-            y_next(17+i) = max(this%controls(i)%rate_limit(1), min(this%controls(i)%rate_limit(2), y_next(17+i)))
+            if (this%controls(i)%dynamics_order > 0) then    
+                y_next(17+i) = max(this%controls(i)%rate_limit(1), min(this%controls(i)%rate_limit(2), y_next(17+i)))
+            end if
         end do
+        
 
         this%state = y_next
 
@@ -1324,6 +1338,11 @@ contains
         call quat_norm(this%state(10:13))
 
         if (sqrt(y_next(4)**2 + y_next(5)**2 + y_next(6)**2)*dt/(2.0*PI) > 0.1) write(*,*) "WARNING: High Vehicle Rotation relative to integration timestep"
+        
+        call get_controller_input(this, time + dt)
+        do i=1,4
+            if (this%controls(i)%dynamics_order == 0) this%state(13+i) = max(min(this%controls(i)%set_point, this%controls(i)%mag_limit(2)), this%controls(i)%mag_limit(1))
+        end do
         
 
         ! write to file
@@ -1341,6 +1360,23 @@ contains
         end if
             
     end subroutine vehicle_tick_state
+
+
+    subroutine get_controller_input(this, time)
+        implicit none
+        type(vehicle_type) :: this
+        real, intent(in) :: time
+        real :: controls_setpoint(4)
+        integer :: i 
+
+        if (this%controller%running) then
+            controls_setpoint(:) = controller_update(this%controller, this%state, time)
+            do i=1,4
+                this%controls(i)%set_point = controls_setpoint(i)
+                if (this%controls(i)%dynamics_order == 0) this%state(13+i) = max(min(controls_setpoint(i), this%controls(i)%mag_limit(2)), this%controls(i)%mag_limit(1))
+            end do
+        end if 
+    end subroutine get_controller_input
 
 
     subroutine update_geographic(this, y1, y2)

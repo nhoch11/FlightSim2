@@ -20,15 +20,16 @@ module sim_m
     subroutine init(input_file)
         implicit none
         character(len=*), intent(in) :: input_file
-        type(json_value), pointer :: j_vehicles, j_temp
+        type(json_value), pointer :: j_vehicles, j_atmosphere, j_temp
         integer :: i
 
+        input_filename = input_file
         
         headers = [character(len=20) :: &
         " time[s]", " dt[s]", " u[ft/s]", " v[ft/s]", " w[ft/s]", &
         " p[rad/s]", " q[rad/s]", " r[rad/s]", " x[ft]", " y[ft]", " z[ft]",  &
         " e0", " ex", " ey", " ez", &
-        " aileron", " elevator", " rudder", " throttle",&
+        " aileron[deg]", " elevator[deg]", " rudder[deg]", " throttle",&
         " d_aileron", " d_elevator", " d_rudder", " d_throttle"]
         
         write(*,*) "Initializing Simulation..."       
@@ -54,11 +55,22 @@ module sim_m
 
         if (geographic_model_ID > 0) then
             headers = [character(len=20) :: &
-             headers, &
-             " latitude[deg]", &
-             " longitude[deg]", &
-             " azimuth[deg]"]
-        end if
+                headers, &
+                " latitude[deg]", &
+                " longitude[deg]", &
+                " azimuth[deg]"]
+            end if
+            
+        headers = [character(len=20) :: &
+            headers, &
+            " aileron_sp[deg]", &
+            " elevator_sp[deg]", &
+            " rudder_sp[deg]", &
+            " throttle_sp[none]"]
+
+    
+        write(*,*) "Reading Atmospheric JSON object..."
+        call jsonx_get(j_main, "atmosphere", j_atmosphere)
 
         write(*,*) "Initializing Vehicles..."
         call jsonx_get(j_main, "vehicles", j_vehicles)
@@ -68,6 +80,7 @@ module sim_m
         ! initialize each vehicle
         do i=1,num_vehicles
             call json_value_get(j_vehicles, i, j_temp)
+            call atmosphere_init(vehicles(i)%atm, j_atmosphere)
             call vehicle_init(vehicles(i), j_temp)
         end do
         write(*,*)"" 
@@ -78,6 +91,7 @@ module sim_m
     
     subroutine run()
         
+        use iso_fortran_env, only: output_unit
         implicit none
         
         real :: time, dt, tf, stop_time
@@ -145,10 +159,43 @@ module sim_m
                         vehicles(i)%azimuth_deg = vehicles(i)%init_eul(3)*180.0/PI
                         write(*,'(*(ES20.12))', advance='no') vehicles(i)%latitude_deg, vehicles(i)%longitude_deg, vehicles(i)%azimuth_deg
                     end if
+                    write(*,'(*(ES20.12))', advance='no') vehicles(i)%controls(1)%set_point*vehicles(i)%controls(1)%display_units, &
+                                                          vehicles(i)%controls(2)%set_point*vehicles(i)%controls(2)%display_units, &
+                                                          vehicles(i)%controls(3)%set_point*vehicles(i)%controls(3)%display_units, &
+                                                          vehicles(i)%controls(4)%set_point*vehicles(i)%controls(4)%display_units
                     write(*,*) "" 
                 end if
             end do
         end if
+
+        ! write to file header and first state
+        if (save_states) then
+            do i=1,num_vehicles
+                if (vehicles(i)%run_physics) then
+                    write(vehicles(i)%iunit_states,'(A20, ",",*(A20,:,","))') "vehicle name   ", headers
+                    write(vehicles(i)%iunit_states,'(A19, ",", *(ES20.12,:,","))', advance='no') vehicles(i)%name, time, dt, vehicles(i)%state(1:13), &
+                        vehicles(i)%state(14)*vehicles(i)%controls(1)%display_units, &
+                        vehicles(i)%state(15)*vehicles(i)%controls(2)%display_units, &
+                        vehicles(i)%state(16)*vehicles(i)%controls(3)%display_units, &
+                        vehicles(i)%state(17)*vehicles(i)%controls(4)%display_units, &
+                        vehicles(i)%state(18)*vehicles(i)%controls(1)%display_units, &
+                        vehicles(i)%state(19)*vehicles(i)%controls(2)%display_units, &
+                        vehicles(i)%state(20)*vehicles(i)%controls(3)%display_units, &
+                        vehicles(i)%state(21)*vehicles(i)%controls(4)%display_units
+                    if (geographic_model_ID>0) then
+                        vehicles(i)%azimuth_deg = vehicles(i)%init_eul(3)*180.0/PI
+                        write(vehicles(i)%iunit_states,'(",",*(ES20.12,:,","))', advance='no') vehicles(i)%latitude_deg, vehicles(i)%longitude_deg, vehicles(i)%azimuth_deg
+                    end if
+                    write(vehicles(i)%iunit_states,'(",",*(ES20.12,:,","))', advance='no') vehicles(i)%controls(1)%set_point*vehicles(i)%controls(1)%display_units, &
+                                                                                       vehicles(i)%controls(2)%set_point*vehicles(i)%controls(2)%display_units, &
+                                                                                       vehicles(i)%controls(3)%set_point*vehicles(i)%controls(3)%display_units, &
+                                                                                       vehicles(i)%controls(4)%set_point*vehicles(i)%controls(4)%display_units
+                    write(vehicles(i)%iunit_states,*) "" 
+                end if
+            end do
+        end if
+
+        
             
         ! get start time
         cpu_start_time = get_time()
@@ -176,27 +223,41 @@ module sim_m
             istep = istep + 1
 
             ! write to terminal
+            ! if (verbose .and. (modulo(istep, print_rate) == 0)) then
+            !     do i=1,num_vehicles
+            !         if (vehicles(i)%run_physics) then
+            !             write(*,'(A19, *(ES20.12))', advance='no') vehicles(i)%name, time, dt, vehicles(i)%state(1:13), &
+            !             vehicles(i)%state(14)*vehicles(i)%controls(1)%display_units, &
+            !             vehicles(i)%state(15)*vehicles(i)%controls(2)%display_units, &
+            !             vehicles(i)%state(16)*vehicles(i)%controls(3)%display_units, &
+            !             vehicles(i)%state(17)*vehicles(i)%controls(4)%display_units, &
+            !             vehicles(i)%state(18)*vehicles(i)%controls(1)%display_units, &
+            !             vehicles(i)%state(19)*vehicles(i)%controls(2)%display_units, &
+            !             vehicles(i)%state(20)*vehicles(i)%controls(3)%display_units, &
+            !             vehicles(i)%state(21)*vehicles(i)%controls(4)%display_units
+            !             if (geographic_model_ID>0) then
+            !                 eul = quat_to_euler(vehicles(i)%state(10:13))
+            !                 vehicles(i)%azimuth_deg = eul(3)*180.0/PI                            
+            !                 write(*,'(*(ES20.12))', advance='no') vehicles(i)%latitude_deg, vehicles(i)%longitude_deg, vehicles(i)%azimuth_deg
+            !             end if
+            !             write(*,*) "" 
+            !         end if
+            !     end do
+            ! end if
+            
+            ! write to terminal and/or file
             if (verbose .and. (modulo(istep, print_rate) == 0)) then
                 do i=1,num_vehicles
                     if (vehicles(i)%run_physics) then
-                        write(*,'(A19, *(ES20.12))', advance='no') vehicles(i)%name, time, dt, vehicles(i)%state(1:13), &
-                        vehicles(i)%state(14)*vehicles(i)%controls(1)%display_units, &
-                        vehicles(i)%state(15)*vehicles(i)%controls(2)%display_units, &
-                        vehicles(i)%state(16)*vehicles(i)%controls(3)%display_units, &
-                        vehicles(i)%state(17)*vehicles(i)%controls(4)%display_units, &
-                        vehicles(i)%state(18)*vehicles(i)%controls(1)%display_units, &
-                        vehicles(i)%state(19)*vehicles(i)%controls(2)%display_units, &
-                        vehicles(i)%state(20)*vehicles(i)%controls(3)%display_units, &
-                        vehicles(i)%state(21)*vehicles(i)%controls(4)%display_units
-                        if (geographic_model_ID>0) then
-                            eul = quat_to_euler(vehicles(i)%state(10:13))
-                            vehicles(i)%azimuth_deg = eul(3)*180.0/PI                            
-                            write(*,'(*(ES20.12))', advance='no') vehicles(i)%latitude_deg, vehicles(i)%longitude_deg, vehicles(i)%azimuth_deg
-                        end if
-                        write(*,*) "" 
+                        call vehicle_write_state(vehicles(i), time, dt, geographic_model_ID, output_unit)
+                        if (save_states) call vehicle_write_state(vehicles(i), time, dt, geographic_model_ID, vehicles(i)%iunit_states)
                     end if
                 end do
             end if
+
+    
+
+            
 
             if (real_time) then
                 time2 = get_time()
@@ -223,6 +284,11 @@ module sim_m
                 write(*,*) "  Total error in time [s] = ", integrated_time - actual_time
             end if 
         end if
+
+        do i=1,num_vehicles
+            if (save_states) close(vehicles(i)%iunit_states) 
+            if (rk4_verbose) close(vehicles(i)%iunit_rk4) 
+        end do
 
     end subroutine
 

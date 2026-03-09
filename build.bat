@@ -9,6 +9,7 @@ common/jsonx.f90 ^
 common/database_m.f90 ^
 common/udp_windows_m.f90 ^
 common/connection_m.f90 ^
+atmosphere.f90 ^
 controller.f90 ^
 vehicle.f90 ^
 sim.f90 ^

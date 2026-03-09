@@ -11,6 +11,7 @@ module vehicle_m
     real :: gravity_relief_factor
     integer :: geographic_model_ID
     character(len=:), allocatable :: geographic_model
+    character(len=:), allocatable :: input_filename
 
     type stall_settings_type
         real :: alpha_0, alpha_s, lambda_b, min_val 
@@ -87,6 +88,7 @@ module vehicle_m
         real :: latitude, longitude, latitude_deg, longitude_deg, azimuth_deg
 
         type(trim_settings_type) :: trim
+        type(atmosphere_type) :: atm
         type(controller_type) :: controller
 
         
@@ -120,14 +122,14 @@ contains
         
         if (this%run_physics) then 
             if (save_states) then
-                this%states_filename = trim(this%name)//"_states.csv"
+                this%states_filename = input_filename(:len_trim(input_filename)-5)//"_"//trim(this%name)//"_states.csv"
                 open(newunit=this%iunit_states, file=this%states_filename, status="REPLACE")
-                write(this%iunit_states,*) "time[s],u[ft/s],v[ft/s],w[ft/s],p[rad/s],q[rad/s],r[rad/s],x[ft],y[ft],z[ft],e0,ex,ey,ez"
-                write(*,*) "    - states will be written to ", this%states_filename
+                ! write(this%iunit_states,*) "time[s],u[ft/s],v[ft/s],w[ft/s],p[rad/s],q[rad/s],r[rad/s],x[ft],y[ft],z[ft],e0,ex,ey,ez"
+                ! write(*,*) "    - states will be written to ", this%states_filename
             end if 
             
             if (rk4_verbose) then
-                this%rk4_filename = trim(this%name)//"_RK4.csv"
+                this%rk4_filename = trim(input_filename)//"_"//trim(this%name)//"_RK4.csv"
                 open(newunit=this%iunit_rk4, file=this%rk4_filename, status="REPLACE")
                 write(*,*) "    - RK4 results will be written to ", this%states_filename
             end if
@@ -312,8 +314,9 @@ contains
 
             ! initial conditions
             this%init_state = 0.
-
+            write(*,*) " check1"
             call jsonx_get(this%j_vehicle, "initial.airspeed[ft/s]",  this%init_V)
+            write(*,*) " check2"
             call jsonx_get(this%j_vehicle, "initial.altitude[ft]",  this%init_alt)
             this%init_state(9) = -this%init_alt
             call jsonx_get(this%j_vehicle, "initial.latitude[deg]",  this%latitude_deg)
@@ -341,10 +344,13 @@ contains
             
             this%state = this%init_state
             
-            if (save_states) then
-                call vehicle_write_state(this, 0.0, this%state)
+            if (this%controller%set_trim_bias) then
+                this%controller%p_da%bias = this%init_state(this%aileron_ID)
+                this%controller%q_de%bias = this%init_state(this%elevator_ID)
+                this%controller%r_dr%bias = this%init_state(this%rudder_ID)
+                this%controller%V_tau%bias = this%init_state(this%throttle_ID)
             end if
-            
+
             call get_controller_input(this, 0.0)
             
         end if ! run_physics
@@ -695,6 +701,11 @@ contains
         write(*,'(5A, 1(1x,ES22.14))') "              ", this%controls(2)%name, "[",this%controls(2)%units, "] = ", this%init_state(15)*this%controls(2)%display_units
         write(*,'(5A, 1(1x,ES22.14))') "                ", this%controls(3)%name, "[",this%controls(3)%units, "] = ", this%init_state(16)*this%controls(3)%display_units
         write(*,'(5A, 1(1x,ES22.14))') "             ", this%controls(4)%name, "[",this%controls(4)%units, "] = ", this%init_state(17)*this%controls(4)%display_units
+        write(*,*)"" 
+        write(*,'(3A, 1(1x,ES22.14))') "               ", this%controls(1)%name, "[rad] = ", this%init_state(14)
+        write(*,'(3A, 1(1x,ES22.14))') "              ", this%controls(2)%name, "[rad] = ", this%init_state(15)
+        write(*,'(3A, 1(1x,ES22.14))') "                ", this%controls(3)%name, "[rad] = ", this%init_state(16)
+        write(*,'(3A, 1(1x,ES22.14))') "                   ", this%controls(4)%name, " = ", this%init_state(17)
         write(*,*)"" 
         write(*,'(A, 1(1x,ES22.14))') "                   phi[deg] = ", x(7)*180./pi
         write(*,'(A, 1(1x,ES22.14))') "                 theta[deg] = ", x(8)*180./pi
@@ -1343,14 +1354,7 @@ contains
         do i=1,4
             if (this%controls(i)%dynamics_order == 0) this%state(13+i) = max(min(this%controls(i)%set_point, this%controls(i)%mag_limit(2)), this%controls(i)%mag_limit(1))
         end do
-        
-
-        ! write to file
-        if (save_states) then
-            ! call vehicle_write_state(this, dt, y_next)
-            write(this%iunit_states,*) "time[s],u[ft/s],v[ft/s],w[ft/s],p[rad/s],q[rad/s],r[rad/s],x[ft],y[ft],z[ft],e0,ex,ey,ez"
-            write(*,*) "    - states will be written to ", this%states_filename
-        end if
+    
         
         if (verbose2) then
             write(*,*)
@@ -1450,11 +1454,58 @@ contains
     end subroutine update_geographic
 
 
-    subroutine vehicle_write_state(this, time, y)
+    subroutine vehicle_write_state(this, time, dt, geographic_model_ID, iunit)
+        use iso_fortran_env, only: output_unit
         implicit none
         type(vehicle_type) :: this
-        real, intent(in) :: time
-        real, dimension(21), intent(in) :: y
+        real, intent(in) :: time, dt
+        integer, intent(in) :: geographic_model_ID, iunit
+        real :: eul(3)
+
+        if (iunit == output_unit) then
+            write(iunit,'(A19, *(ES20.12))', advance='no') this%name, time, dt, this%state(1:13), &
+            this%state(14)*this%controls(1)%display_units, &
+            this%state(15)*this%controls(2)%display_units, &
+            this%state(16)*this%controls(3)%display_units, &
+            this%state(17)*this%controls(4)%display_units, &
+            this%state(18)*this%controls(1)%display_units, &
+            this%state(19)*this%controls(2)%display_units, &
+            this%state(20)*this%controls(3)%display_units, &
+            this%state(21)*this%controls(4)%display_units
+            if (geographic_model_ID>0) then
+                eul = quat_to_euler(this%state(10:13))
+                this%azimuth_deg = eul(3)*180.0/PI                            
+                write(iunit,'(*(ES20.12))', advance='no') this%latitude_deg, this%longitude_deg, this%azimuth_deg
+            end if
+            write(iunit,'(*(ES20.12))', advance='no') this%controls(1)%set_point*this%controls(1)%display_units, &
+                                                      this%controls(2)%set_point*this%controls(2)%display_units, &
+                                                      this%controls(3)%set_point*this%controls(3)%display_units, &
+                                                      this%controls(4)%set_point*this%controls(4)%display_units
+            write(iunit,*) "" 
+        else 
+            write(iunit,'(A19,"," *(ES20.12,:,","))', advance='no') this%name, time, dt, this%state(1:13), &
+            this%state(14)*this%controls(1)%display_units, &
+            this%state(15)*this%controls(2)%display_units, &
+            this%state(16)*this%controls(3)%display_units, &
+            this%state(17)*this%controls(4)%display_units, &
+            this%state(18)*this%controls(1)%display_units, &
+            this%state(19)*this%controls(2)%display_units, &
+            this%state(20)*this%controls(3)%display_units, &
+            this%state(21)*this%controls(4)%display_units
+            if (geographic_model_ID>0) then
+                eul = quat_to_euler(this%state(10:13))
+                this%azimuth_deg = eul(3)*180.0/PI                            
+                write(iunit,'(",",*(ES20.12,:,","))', advance='no') this%latitude_deg, this%longitude_deg, this%azimuth_deg
+            end if
+            write(iunit,'(",",*(ES20.12,:,","))', advance='no') this%controls(1)%set_point*this%controls(1)%display_units, &
+                                                             this%controls(2)%set_point*this%controls(2)%display_units, &
+                                                             this%controls(3)%set_point*this%controls(3)%display_units, &
+                                                             this%controls(4)%set_point*this%controls(4)%display_units
+            write(iunit,*) "" 
+        end if
+
+
     end subroutine vehicle_write_state
+
 
 end module vehicle_m

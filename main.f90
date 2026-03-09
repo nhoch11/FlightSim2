@@ -15,7 +15,7 @@ program main
     ! Start timer
     call system_clock(start_count, count_rate_main)
 
-    call init("test_controller.json")
+    call init("9.3.1.json")
     call run()
     
 

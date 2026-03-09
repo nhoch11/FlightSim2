@@ -3,9 +3,13 @@ module connection_m
     use iso_c_binding
     use jsonx_m
     use database_m, only: database, new_database, char_length, int2str
-    ! use io_m, only: zTimer
+    use iso_fortran_env, only: int64
     implicit none
     
+    integer(int64), private :: clock_max
+    real, private :: clock_rate
+    logical, private :: clock_initialized
+    private :: count2sec
     
     type, abstract :: channel
         integer :: n
@@ -71,9 +75,9 @@ module connection_m
     type :: connection
         ! real, allocatable :: vals(:)
         class(channel), allocatable :: ch
-        ! type(zTimer) :: refresh
-        real :: refresh_time, time, duration
-        ! logical :: only_send
+        integer(int64) :: lapCount, refreshCount
+        real :: refresh_time, time
+        logical :: use_system_clock
     contains
         procedure :: init          => connection_init
         procedure :: send          => connection_send
@@ -82,6 +86,17 @@ module connection_m
     end type connection
     
 contains
+    
+    function   count2sec(cs, ce) result(s)
+        integer(int64), intent(in) :: cs, ce
+        real :: s
+        
+        if (ce >= cs) then
+            s = real(ce - cs) / clock_rate
+        else
+            s = real(ce + (clock_max - cs) + 1) / clock_rate
+        end if
+    end function count2sec
     
     subroutine channel_init(t, p, n)
         class(channel), intent(out) :: t
@@ -344,10 +359,9 @@ contains
         real, optional, intent(in) :: time
         
         real :: refresh_rate
+        integer(int64) :: temp
         
         t%ch = new_channel(p, n)
-        
-        ! t%only_send = t%ch%only_send
         
         call jsonx_get(p, 'refresh_rate', refresh_rate, 0.)
         if (refresh_rate <= 0.) then
@@ -355,16 +369,29 @@ contains
         else
             t%refresh_time = 1. / refresh_rate
         end if
-        
-        ! call t%refresh%init()
-        ! t%refresh%lapTime = t%refresh%startTime-t%refresh_time    !! guarantees the first call will trigger a send/recv
-        
-        if(present(time)) then
-            t%time = 0.0
+                
+        if (present(time)) then
+            t%use_system_clock = .false.
+            t%time = time - t%refresh_time   !! guarantees the first call will trigger a send/recv
         else
-            call cpu_time(t%time)
+            t%use_system_clock = .true.
+            if (.not. clock_initialized) then
+                clock_initialized = .true.
+                call system_clock(count_rate = temp, count_max = clock_max)
+                if (temp <= 0) then
+                    write(*,*) 'Error! system_clock not supported, returned 0 clock_rate. Quitting...'
+                    stop
+                end if
+                clock_rate = real(temp)
+            end if
+            
+            call system_clock(t%lapCount)
+            t%refreshCount = int(t%refresh_time * clock_rate + 1., kind=int64)
+            t%lapCount = t%lapCount - t%refreshCount  !! guarantees the first call will trigger a send/recv
+            do while (t%lapCount < 0)
+                t%lapCount = t%lapCount + clock_max
+            end do
         end if
-        t%time = t%time - t%refresh_time
         
     end subroutine connection_init
     
@@ -372,11 +399,10 @@ contains
         class(connection), intent(inout) :: t
         real, intent(in) :: vals(t%ch%n)
         real, optional, intent(in) :: time
+        integer(int64) :: currentCount
         
         if (t%check_refresh(time)) then
             call t%ch%send(vals)
-            ! t%refresh%lapTime = t%refresh%lapTime + t%refresh_time
-            t%time = t%time + t%refresh_time
         end if
         
     end subroutine connection_send
@@ -389,8 +415,6 @@ contains
         
         if (t%check_refresh(time)) then
             vals = t%ch%recv(x)
-            ! t%refresh%lapTime = t%refresh%lapTime + t%refresh_time
-            t%time = t%time + t%refresh_time
         else
             vals = t%ch%vals
         end if
@@ -398,17 +422,34 @@ contains
     end function connection_recv
     
     function   connection_check_refresh(t,time) result(flag)
-        class(connection), intent(in) :: t
+        class(connection), intent(inout) :: t
         real, optional, intent(in) :: time
         logical :: flag
-        real :: current
-        ! flag = t%refresh%getLapTimeSeconds() >= t%refresh_time
-        if(present(time)) then
-            current = time
-        else
-            call cpu_time(current)
+        integer(int64) :: currentCount
+        
+        if (t%use_system_clock .eqv. present(time)) then
+            if (t%use_system_clock) then
+                write(*,*) 'Error with connection! Connection initialized as real-time but a time value was given during a send/recv! Quitting...'
+            else
+                write(*,*) 'Error with connection! Connection initialized as manual-time but a time value was not given during a send/recv! Quitting...'
+            end if
+            stop
         end if
-        flag = current - t%time >= (t%refresh_time - 1.0e-10)
+        
+        if(t%use_system_clock) then
+            call system_clock(currentCount)
+            flag = count2sec(t%lapCount, currentCount) >= (t%refresh_time - 1.0e-10)
+            if (flag) then
+                t%lapCount = t%lapCount + t%refreshCount
+                do while (t%lapCount > clock_max)
+                    t%lapCount = t%lapCount - clock_max
+                end do
+            end if
+        else
+            flag = time - t%time >= (t%refresh_time - 1.0e-10)
+            if (flag) t%time = t%time + t%refresh_time
+        end if
+        
     end function connection_check_refresh
     
 end module connection_m

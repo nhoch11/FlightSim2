@@ -325,5 +325,203 @@ contains
 
     end function
 
+        !---------------------------------------------------------------------------------
+    function rand_normal() result(z)
+        !! Return a single normally distributed random number (mean=0, std=1)
+        real :: z
+        real, save :: z2 = 0.0
+        logical, save :: has_saved = .false.
+        real :: u1, u2, r, theta
+        
+        if (has_saved) then
+            !! Return the saved value from last time
+            z = z2
+            has_saved = .false.
+        else
+            !! Generate two uniforms
+            call random_number(u1)
+            call random_number(u2)
+            
+            !! Guard against u1 = 0
+            if (u1 <= 0.0) u1 = 1.0e-12
+            if (u1 >  1.0) u1 = 1.0
+            
+            !! Box-Muller transform
+            r = sqrt(-2.0*log(u1))
+            theta = 2.0*pi*u2
+            z  = r * cos(theta)
+            z2 = r * sin(theta)
+            
+            has_saved = .true.
+        end if
+    end function rand_normal
+
+    !---------------------------------------------------------------------------------
+    function   interpolate_1D(xa, ya, x, saturate) result(y)
+        real, intent(in) :: xa(:), ya(:), x
+        logical, intent(in), optional :: saturate
+        real :: y
+        integer :: i, N
+        logical :: sat
+        N = size(xa)
+        if (N /= size(ya)) then
+            write(*,*) 'Error interpolating 1D array: sizes do not match!'
+            stop
+        end if
+        if (present(saturate)) then
+            sat = saturate
+        else
+            sat = .true.
+        end if
+        if (sat) then
+            if (x <= xa(1)) then
+                y = ya(1)
+                return
+            end if
+            do i=2, N
+                if (xa(i-1) <= x .and. x <= xa(i)) then
+                    y = interpolate(xa(i-1), xa(i), x, ya(i-1), ya(i))
+                    return
+                end if
+            end do
+            y = ya(N)
+        else
+            do i=2, N
+                if (xa(i-1) <= x .and. x <= xa(i)) then
+                    y = interpolate(xa(i-1), xa(i), x, ya(i-1), ya(i))
+                    return
+                end if
+            end do
+            write(*,*) 'Error interpolating 1D array: value outside of the range'
+            stop
+        end if
+    end function interpolate_1D
+
+    !---------------------------------------------------------------------------------
+    function interpolate(x1, x2, x, y1, y2) result(y)
+        real, intent(in) :: x1, x2, x, y1, y2
+        real :: y
+        y = (y2-y1) / (x2-x1) * (x-x1) + y1
+    end function interpolate
+
+    !---------------------------------------------------------------------------------
+    subroutine psd(x, dt, psd_norm, filename)
+        implicit none
+        real, intent(in) :: x(:), dt
+        real, intent(out), optional :: psd_norm(:,:)
+        character(len=*), intent(in), optional :: filename
+        integer :: n, k, i, iunit
+        real :: fs, f, mean, stdev
+        real, allocatable :: Pxx(:), loc_psd_norm(:,:)
+        complex :: eye, temp
+
+        n = size(x)
+        if (mod(n,2) /= 0) error stop "periodogram: N must be even for N/2 bin."
+        allocate(Pxx(n/2+1))
+        allocate(loc_psd_norm(n/2+1,2))
+        eye = cmplx(0.0, 1.0)
+
+        ! compute mean and stdev
+        mean = 0.0
+        stdev = 0.0
+        do i=1,n
+            mean = mean + x(i)/n
+        end do
+        do i=1,n
+            stdev = stdev + (x(i)-mean)**2
+        end do
+        stdev = sqrt(stdev/(n-1))
+
+        if(present(filename)) then
+            open(newunit=iunit, file=filename, status="replace", action="write")
+            write(iunit,'(A)') 'fs[Hz],PSD[ft^2/Hz],Normalized_PSD,Mean,STDEV'
+            write(*,*) trim(filename),'   Mean = ',mean,'   Std. Dev = ',stdev
+        end if
+
+        Pxx(:) = 0.0
+        fs = 1.0/dt
+        do k=0,n/2
+            f = real(k)*fs/real(n)
+            temp = cmplx(0.0, 0.0)
+            do i=1,n
+                temp = temp + (x(i)-mean)*exp(-eye*2.0*PI*real(i-1)*real(k)/real(n))
+            end do
+            Pxx(k+1) = 1/fs/real(n)*abs(temp)**2
+            if (k /= 0 .and. k /= n/2) Pxx(k+1) = 2.0*Pxx(k+1)
+            loc_psd_norm(k+1,1) = f
+            loc_psd_norm(k+1,2) = Pxx(k+1)/stdev**2
+            if(present(filename)) then
+                if(k==0) then
+                    write(iunit,'(ES20.12,",",ES20.12,",",ES20.12,",",ES20.12,",",ES20.12)') f, Pxx(k+1), loc_psd_norm(k+1,2),mean,stdev
+                else
+                    write(iunit,'(ES20.12,",",ES20.12,",",ES20.12)') f, Pxx(k+1), loc_psd_norm(k+1,2)
+                end if
+            end if
+        end do
+
+        if(present(filename)) close(iunit)
+        if(present(psd_norm)) psd_norm = loc_psd_norm
+    end subroutine psd
+
+    !---------------------------------------------------------------------------------
+    subroutine test_rand_normal()
+        implicit none
+        integer, parameter :: n = 100000
+        integer, parameter :: nbins = 100
+        real, allocatable :: x(:), hist(:)
+        real :: mean, sigma, xmin, xmax, dx, binval
+        integer :: i, b, iunit
+        character(len=:), allocatable :: filename  
+
+        write(*,*) '   Testing function rand_normal():'
+
+        allocate(x(n))
+        allocate(hist(nbins))
+        do i = 1, n
+            ! call random_number(x(i)) ! this is a uniform distribution from 0 to 1 with a mean of 0.5
+            x(i) = rand_normal() ! this is a normal distribution with a mean of 0 and a std dev of 1
+        end do
+
+        mean  = sum(x) / n
+        sigma = sqrt( sum((x-mean)**2) / (n-1) )
+
+        write(*,*) '     Mean  = ', mean
+        write(*,*) '     Std   = ', sigma
+        write(*,*) '     Expected mean error ~ ', 1.0/sqrt(real(n))
+        write(*,*) '     Expected std error  ~ ', 1.0/sqrt(2.0*n)
+
+        ! Build histogram
+        xmin = -5.0; xmax = 5.0
+        dx = (xmax-xmin)/nbins
+        hist = 0.0
+
+        do i = 1, n
+            if (x(i) >= xmin .and. x(i) < xmax) then
+                b = int((x(i)-xmin)/dx) + 1
+                hist(b) = hist(b) + 1
+            end if
+        end do
+
+        hist = hist / (n*dx)   ! normalize to PDF
+
+        filename = 'rand_normal_test.csv'
+        open(newunit=iunit, file=filename, status="replace", action="write")
+        write(iunit,'(A)') 'bin_number,bin_midpoint_value,normalized_histogram,analytic_solution'
+        do i=1,nbins
+            binval = xmin+dx*i-0.5*dx
+            write(iunit,*) i,',',binval,',',hist(i),',',exp(-0.5*(binval**2))/sqrt(2.0*PI)
+        end do
+        write(*,*) '     Histogram written to file: ',trim(filename)
+        write(*,*)
+        close(iunit)
+
+        ! Compute PSD
+        ! call psd(x(:),0.01,filename='rand_normal_psd.csv')
+
+        deallocate(x)
+        deallocate(hist)
+    end subroutine test_rand_normal
+
+
 
 end module hoch_m 

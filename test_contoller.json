@@ -164,7 +164,7 @@
                         "refresh_rate" : 1000,
                         "channel_type" : "file",
                         "filename": "pilot_commands.csv",
-                        "data_base_type" : "rectilinear",
+                        "database_type" : "rectilinear",
                         "double_precision" : true 
                     }
                 },

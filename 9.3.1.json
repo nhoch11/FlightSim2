@@ -1,7 +1,7 @@
 {
     "simulation" : {
         "time_step[s]" : 0.01,
-        "end_time[s]" : 10.0,
+        "end_time[s]" : 1.0,
         "print_rate" : 1,
         "gravity_relief": true,
         "save_states" : true,
@@ -24,7 +24,7 @@
                 "height_above_ground[ft]": 2000,
                 "dx[ft]": 20,
                 "number_of_points": 20000,
-                "psd_analyses": 100
+                "psd_analyses": 10
             }
         }
     },

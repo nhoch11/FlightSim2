@@ -167,7 +167,7 @@ contains
                     turb(:) = get_turbulence(this, dx, sigma, sigma, sigma)
                     vals(i,:) = turb(:)
                 end do
-                call psd(vals(:,2), dx, psd_norm=psd_temp) ! 1=u, 2=v, 3=w
+                call psd(vals(:,1), dx, psd_norm=psd_temp) ! 1=u, 2=v, 3=w
                 psd_mean(:,2) = psd_mean(:,2) + psd_temp(:,2)/n_psd
             end do
 

@@ -1,4 +1,6 @@
 module database_m
+    ! use io_m, only: progressBar
+    use omp_lib
     implicit none
     
     integer, parameter :: char_length = 200
@@ -7,6 +9,7 @@ module database_m
         integer :: n_iv, n_dv, n_pts
         real, allocatable :: x(:,:), y(:,:)
         character(len=char_length), allocatable, dimension(:) :: ind_vars, dep_vars
+        logical :: saturate
     contains
         procedure(interface_interpolate), deferred :: interpolate
     end type
@@ -244,13 +247,14 @@ contains
     
     !!==================================================================
     
-    subroutine database_init(t, fn, pn)
+    subroutine database_init(t, fn, pn, verbose)
         class(database), intent(inout) :: t
         character(len=*), intent(in) :: fn
         character(len=*), intent(in), optional :: pn
+        logical, intent(in), optional :: verbose
         
         character(len=:), allocatable :: input_file
-        logical :: flag
+        logical :: flag, verb
         integer :: fid, ios
         character(len=char_length*100) :: line                          !! TODO: change to allocatable length?
         integer :: n_comments, n_parameters, n_rows, n_pts, headings_row
@@ -258,6 +262,16 @@ contains
         integer :: i, j, k1, k2, k3, k4, ii
         character(len=:), allocatable :: temp
         real, allocatable :: vals(:)
+        
+        t%saturate = .false.
+        
+        if (present(verbose)) then
+            verb = verbose
+        else
+            verb = .true.
+        end if
+        
+        if (verb) write(*,*) 'Reading in '//trim(fn)
         
         !! and on the pathname if given
         if (present(pn)) then
@@ -348,6 +362,10 @@ contains
             deallocate(cols)
         end do outer
         
+        if (verb) write(*,*) 'Rows: '//int2str(n_rows)//', Comments: '//&
+            int2str(n_comments)//', Parameters: '//int2str(n_parameters)&
+            //', Points: '//int2str(n_pts)
+        
         !! check results
         if (n_rows /= n_comments + n_parameters + 1 + n_pts) then
             write(*,*) 'Error reading database csv '//trim(input_file)//'! Number of rows, comments, parameters, and data points do not agree!'
@@ -392,19 +410,34 @@ contains
     
     !!==================================================================
     
-    subroutine db_rect_init(t, fn, pn)  !! potential edit: add verbosity?
+    subroutine db_rect_init(t, fn, pn, verbose, presorted)  !! potential edit: add verbosity?
         class(db_rect), intent(out) :: t
         character(len=*), intent(in) :: fn
         character(len=*), intent(in), optional :: pn
+        logical, intent(in), optional :: verbose, presorted
         
         real, dimension(:,:), allocatable :: x, y
         ! character(len=char_length), dimension(:), intent(in) :: names_x, names_y
         
-        integer :: i, j, k, l, ii
+        integer :: i, j, k, l, ii, ic
         real, allocatable, dimension(:) :: unique_temp
         integer, allocatable, dimension(:) :: n
+        logical :: verb, sort
+        ! type(progressBar) :: prog
         
-        call database_init(t, fn, pn)
+        if (present(verbose)) then
+            verb = verbose
+        else
+            verb = .true.
+        end if
+        
+        if (present(presorted)) then
+            sort = .not. presorted
+        else
+            sort = .true.
+        end if
+        
+        call database_init(t, fn, pn, verb)
         
         k = t%n_pts
         allocate(x(k,t%n_iv), y(k,t%n_dv))
@@ -416,7 +449,7 @@ contains
         !!==============================================================
         !! determine the unique ind var values
         !!==============================================================
-        if (.true.) then
+        if (verb) write(*,*) 'Determining unique values for rectilinear dataset'
         allocate(t%n_pts_ind_vars(t%n_iv), n(t%n_iv))
         !! loop thru the independent variables
         do i=1, t%n_iv
@@ -441,27 +474,28 @@ contains
             !! reset the temp array
             deallocate(unique_temp)
         end do
-        end if
         
         !!==============================================================
         !! set the data arrays sorted by j indexing
         !!==============================================================
-        if (.true.) then
+        if (sort) then
+        if (.false.) then
+        if (verb) write(*,*) 'Sorting the dataset'
         !! loop thru j indices
         do j=1, calc_numb_coefs(t%n_pts_ind_vars)
             !! decompose j
             n = decompose_j(j, t%n_pts_ind_vars)
             !! loop thru points
             ii = 0
-            outer: do i=1, k
+            outer1: do i=1, k
                 !! check if the point matches each ind var value
                 !! loop thru ind var values
                 do l=1, t%n_iv
-                    if (x(i,l) /= t%unique_ind_vars(n(l), l)) cycle outer
+                    if (x(i,l) /= t%unique_ind_vars(n(l), l)) cycle outer1
                 end do
                 ii = i
-                exit outer
-            end do outer
+                exit outer1
+            end do outer1
             !! store values
             if (ii /= 0) then
                 t%x(j,:) = x(ii,:)
@@ -483,6 +517,84 @@ contains
                 stop
             end if
         end do
+        else
+        ! if (verb) write(*,*) 'Sorting the dataset with max '//int2str(omp_get_max_threads())//' threads.'
+        ! call omp_set_num_threads(6)
+        !! loop thru j indices
+        ! if (verb) call prog%init(k, 'Sorting database')
+        !$omp parallel default(shared) private(j, i, l, ii, n)
+        if (.not. allocated(n)) allocate(n(t%n_iv))
+        ! !$omp master
+        ! write(*,*)
+        ! write(*,*) 'Actually running with '//int2str(omp_get_num_threads())//' threads.'
+        ! !$omp end master
+        !$omp do schedule(dynamic)
+        do j=1, k
+            !! decompose j
+            n = decompose_j(j, t%n_pts_ind_vars)
+            !! loop thru points
+            ii = 0
+            outer2: do i=1, k
+                !! check if the point matches each ind var value
+                !! loop thru ind var values
+                do l=1, t%n_iv
+                    if (x(i,l) /= t%unique_ind_vars(n(l), l)) cycle outer2
+                end do
+                ii = i
+                exit outer2
+            end do outer2
+            !! store values
+            if (ii /= 0) then
+                t%x(j,:) = x(ii,:)
+                t%y(j,:) = y(ii,:)
+            !! failure
+            else
+                !$omp critical
+                write(*,*)
+                write(*,*) 'Failed to find data in a rectilinear grid format! Quitting...'
+                write(*,*) 'unique variable values'
+                do i=1, t%n_iv
+                    write(*,*) trim(t%ind_vars(i))
+                    write(*,*) t%unique_ind_vars(:t%n_pts_ind_vars(i),i)
+                    write(*,*)
+                end do
+                write(*,*) 'Values not found:'
+                do l=1, t%n_iv
+                    write(*,*) t%unique_ind_vars(n(l), l)
+                end do
+                !$omp end critical
+                stop
+            end if
+            if (verb) then
+                !$omp atomic update
+                ! prog%current = prog%current + 1
+                !$omp end atomic
+                !$omp atomic read
+                ! ic = prog%current
+                !$omp end atomic
+                ! if (ic > prog%total .or. mod(ic, 1000) == 0) then
+                    !$omp critical
+                    ! call prog%display()
+                    !$omp end critical
+                    !$omp atomic update
+                    ! prog%current = prog%current - 1
+                    !$omp end atomic
+                ! end if
+            end if
+            
+        end do
+        !$omp end do
+        deallocate(n)
+        !$omp end parallel
+        end if
+        else
+        t%x = x
+        t%y = y
+        end if
+        
+        if (verb) then
+            write(*,*) 'Rectilinear dataset '//trim(fn)//' initialized.'
+            write(*,*)
         end if
         
     end subroutine db_rect_init
@@ -497,6 +609,9 @@ contains
         integer :: i, l, j, jh, V, l_new, jl
         real, allocatable, dimension(:,:) :: d, d_new
         integer, allocatable, dimension(:) :: Nvec, nh, n, nl
+        real :: xx(t%n_iv)
+        
+        ! write(*,*) 'db_rect_interpolate x: ', x
         
         !!==============================================================
         !! down select the data
@@ -510,8 +625,21 @@ contains
         !! calc_numb_coefs.
         
         !! perform 1D interpolations
+        if (t%saturate) then
+            do i=1, t%n_iv
+                if (x(i) > t%unique_ind_vars(t%n_pts_ind_vars(i),i)) then
+                    xx(i) = t%unique_ind_vars(t%n_pts_ind_vars(i),i)
+                else if (x(i) < t%unique_ind_vars(1,i)) then
+                    xx(i) = t%unique_ind_vars(1,i)
+                else
+                    xx(i) = x(i)
+                end if
+            end do
+        else
+            xx = x
+        end if
         do i=1, t%n_iv
-            call get_interp_indices_and_fraction(t%unique_ind_vars(:t%n_pts_ind_vars(i), i), x(i), il(i), ih(i), f(i))
+            call get_interp_indices_and_fraction(t%unique_ind_vars(:t%n_pts_ind_vars(i), i), xx(i), il(i), ih(i), f(i))
         end do
         
         !! get the bounding rectilinear box
@@ -582,9 +710,10 @@ contains
     
     !!==================================================================
     
-    function   new_database(db_type, fn, pn) result(obj)
+    function   new_database(db_type, fn, pn, saturate, presorted) result(obj)
         character(len=*), intent(in) :: db_type, fn
         character(len=*), intent(in), optional :: pn
+        logical, intent(in), optional :: saturate, presorted
         class(database), allocatable           :: obj
         
         type(db_rect), allocatable             :: temp_rect
@@ -594,7 +723,7 @@ contains
         select case (db_type)
             case('rectilinear', 'Rectilinear')
                 allocate(temp_rect)
-                call temp_rect%init(fn, pn)
+                call temp_rect%init(fn, pn, presorted=presorted)
                 obj = temp_rect
             case('recursive', 'Recursive')
                 ! allocate(temp_recu)
@@ -613,6 +742,7 @@ contains
                 write(*,*) 'Must be either rectilinear, recursive, or scatter (currently only rectilinear is available). Quitting...'
                 stop
         end select
+        if (present(saturate)) obj%saturate = saturate
     end function new_database
     
 end module database_m

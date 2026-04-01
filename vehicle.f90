@@ -4,6 +4,7 @@ module vehicle_m
     ! use linalg_mod
     ! use connection_m
     use controller_m
+    use database_m
     
     implicit none
 
@@ -35,8 +36,15 @@ module vehicle_m
         real :: time_constant, nat_freq, damp_ratio
         real :: display_units = 1.0
     end type control_type
-
-    type vehicle_type
+    
+    type vehicle_database_type
+        character(len=:), allocatable :: path
+        character(len=200), allocatable, dimension(:) :: filenames
+        type(db_rect), allocatable :: tables(:)
+        integer :: n
+        end type vehicle_database_type
+        
+        type vehicle_type
         
         type(json_value), pointer :: j_vehicle
         
@@ -66,27 +74,31 @@ module vehicle_m
         real :: Cm0, Cma, Cmqbar, Cmahat, Cmde
         real :: Cnb, Cnpbar, Cnapbar, Cnrbar, Cnda, Cnada, Cndr
         
+        ! aero database
+        type(vehicle_database_type) :: aero_database
+        real :: speed_brake, le_flap
+        
         
         ! stall model constants
         logical :: include_stall
         type(stall_settings_type) :: CL_stall, CD_stall, Cm_stall
-
+        
         ! thrust
         real :: thrust_T0, thrust_Ta
         real, dimension(:), allocatable :: thrust_loc
         real, dimension(4) :: thrust_quat
-
+        
         ! intitialization constants
         character(len=:), allocatable :: init_type
         real, dimension(:), allocatable :: init_eul
         real :: init_V, init_alt
         real :: rho0
-
+        
         ! variables
         real, dimension(21) :: state, init_state
         type(control_type) :: controls(4)
         real :: latitude, longitude, latitude_deg, longitude_deg, azimuth_deg
-
+        
         type(trim_settings_type) :: trim
         type(atmosphere_type) :: atm
         type(controller_type) :: controller
@@ -106,9 +118,10 @@ contains
         type(vehicle_type) :: this 
         type(json_value), pointer :: vehicle_json, j_control, j_control_temp, j_controller
         real, dimension(:), allocatable :: thrust_orientation, hxyz
+        integer :: i
         real :: det
         real :: junk1, junk2, junk3, junk4, junk5
-        logical :: found
+        logical :: allow_saturation, found
 
         this%j_vehicle => vehicle_json
         this%name = this%j_vehicle%name
@@ -212,50 +225,71 @@ contains
             end if
             
             if (this%type == "aircraft") then
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.0", this%CL0)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.alpha", this%CLa)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.alphahat", this%CLahat)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.qbar", this%CLqbar)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.elevator", this%CLde)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.0", this%CL0, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.alpha", this%CLa, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.alphahat", this%CLahat, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.qbar", this%CLqbar, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CL.elevator", this%CLde, 0.0)
                 
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.beta", this%CSb)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.pbar", this%CSpbar)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.alpha_pbar", this%CSapbar)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.rbar", this%CSrbar)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.aileron", this%CSda)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.rudder", this%CSdr)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.beta", this%CSb, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.pbar", this%CSpbar, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.alpha_pbar", this%CSapbar, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.rbar", this%CSrbar, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.aileron", this%CSda, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CS.rudder", this%CSdr, 0.0)
                 
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.L0", this%CD0)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.CL1", this%CD1)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.CL1_CL1", this%CD2)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.CS_CS", this%CDS2)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.qbar", this%CDqbar)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.alpha_qbar", this%CDaqbar)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.elevator", this%CDde)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.alpha_elevator", this%CDade)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.elevator_elevator", this%CDde2)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.L0", this%CD0, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.CL1", this%CD1, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.CL1_CL1", this%CD2, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.CS_CS", this%CDS2, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.qbar", this%CDqbar, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.alpha_qbar", this%CDaqbar, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.elevator", this%CDde, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.alpha_elevator", this%CDade, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.CD.elevator_elevator", this%CDde2, 0.0)
                 
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.beta", this%Clb)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.pbar", this%Clpbar)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.rbar", this%Clrbar)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.alpha_rbar", this%Clarbar)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.aileron", this%Clda)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.rudder", this%Cldr)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.beta", this%Clb, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.pbar", this%Clpbar, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.rbar", this%Clrbar, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.alpha_rbar", this%Clarbar, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.aileron", this%Clda, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cl.rudder", this%Cldr, 0.0)
                 
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.0", this%Cm0)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.alpha", this%Cma)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.qbar", this%Cmqbar)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.alphahat", this%Cmahat)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.elevator", this%Cmde)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.0", this%Cm0, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.alpha", this%Cma, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.qbar", this%Cmqbar, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.alphahat", this%Cmahat, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cm.elevator", this%Cmde, 0.0)
                 
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.beta", this%Cnb)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.pbar", this%Cnpbar)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.alpha_pbar", this%Cnapbar)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.rbar", this%Cnrbar)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.aileron", this%Cnda)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.alpha_aileron", this%Cnada)
-                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.rudder", this%Cndr)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.beta", this%Cnb, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.pbar", this%Cnpbar, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.alpha_pbar", this%Cnapbar, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.rbar", this%Cnrbar, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.aileron", this%Cnda, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.alpha_aileron", this%Cnada, 0.0)
+                call jsonx_get(this%j_vehicle, "aerodynamics.coefficients.Cn.rudder", this%Cndr, 0.0)
                 
+                ! Databases
+                call jsonx_get(this%j_vehicle, "aerodynamics.rectilinear_databases", this%aero_database%filenames, "none")
+                if (trim(this%aero_database%filenames(1)) /= "none") then
+                    this%aero_database%n = size(this%aero_database%filenames)
+                    allocate(this%aero_database%tables(this%aero_database%n))
+                    call jsonx_get(this%j_vehicle, "aerodynamics.database_directory", this%aero_database%path, "")
+                    call jsonx_get(this%j_vehicle, "aerodynamics.database_allow_saturation", allow_saturation)
+                    
+                    ! change these to controls effectors eventually
+                    call jsonx_get(this%j_vehicle, "aerodynamics.speed_brake[deg]", this%speed_brake)
+                    this%speed_brake = this%speed_brake*PI/180.0
+                    call jsonx_get(this%j_vehicle, "aerodynamics.leading_edge_flap[deg]", this%le_flap)
+                    this%le_flap = this%le_flap*PI/180.0
+
+                    ! initialize data tables
+                    do i=1,this%aero_database%n
+                        call this%aero_database%tables(i)%init(this%aero_database%filenames(i), pn = this%aero_database%path, verbose=.true., presorted=.true.)
+                        this%aero_database%tables(i)%saturate = allow_saturation
+                    end do 
+                end if
+
                 ! control effectors
                 write(*,*) "    - controls"
                 call jsonx_get(this%j_vehicle, "control_effectors", j_control)
@@ -343,6 +377,7 @@ contains
             end if
             
             this%state = this%init_state
+            this%atm%prev_xyz = this%state(7:9)
             
             if (this%controller%set_trim_bias) then
                 this%controller%p_da%bias = this%init_state(this%aileron_ID)
@@ -473,6 +508,7 @@ contains
         real :: alpha, beta, sa, sb, ca, cb
         real, allocatable :: R(:), R_neg(:), R_up(:), R_dn(:), jac(:,:), x(:), dx(:)
         
+        this%atm%turb_on = .false.
         this%trimming = .true.
         this%limit_controls = .false.
         
@@ -506,7 +542,7 @@ contains
         this%trim%solve_for_load_factor = .false.
         this%trim%solve_for_fixed_climb_angle = .false.
         this%trim%solve_for_relative_climb_angle = .false.
-
+        
         
         
         call json_get(this%j_vehicle, "initial.trim.fixed_climb_angle[deg]", this%trim%climb_angle, this%trim%solve_for_fixed_climb_angle)
@@ -530,7 +566,7 @@ contains
             x(8) = this%trim%climb_angle ! initial guess
             free_vars(8) = .true.
         end if
-
+        
         if (this%trim%type == "sct") then
             call json_get(this%j_vehicle, "initial.trim.load_factor", this%trim%load_factor, this%trim%solve_for_load_factor)
             if (this%trim%solve_for_load_factor) then
@@ -542,7 +578,7 @@ contains
                 free_vars(7) = .true.
             end if
         end if
-
+        
         if (this%trim%type == "shss") then
             call json_get(this%j_vehicle, "initial.trim.sideslip_angle[deg]", this%trim%sideslip, this%trim%solve_for_sideslip)
             if (this%trim%solve_for_sideslip) then
@@ -555,8 +591,8 @@ contains
                 free_vars(7) = .true.
             end if 
         end if
-
-
+        
+        
         n_free = count(free_vars)
         write(*,*) "     n_free = ", n_free
         write(*,*) "     idx_free = ", idx_free
@@ -576,7 +612,7 @@ contains
         
         R = calc_R(this, x, n_free)
         max_R = maxval(abs(R))
-
+        
         if (this%trim%verbose) then
             write(*,'(A, *(1x,ES24.16))') "      R = ", R
             write(*,'(A, (1x,ES24.16))') "  max_R = ", max_R
@@ -608,15 +644,15 @@ contains
                     write(*,'(A, *(1x,ES24.16))') "     x_up = ", x
                 end if
                 R_up = calc_R(this, x, n_free)
-                    
+                
                 if (this%trim%verbose) then
                     write(*,'(A, *(1x,ES24.16))') "     R_up = ", R_up
                 end if
-
-
+                
+                
                 ! step dn
                 x(k) = x(k) - 2*fd_step
-
+                
                 if (this%trim%verbose) then
                     write(*,*) ""
                     write(*,'(A, I0, A)') "     Perturbing dn,   x[",k,"]"
@@ -635,11 +671,11 @@ contains
                 ! end do
                 
                 jac(:,i) = (R_up - R_dn)/(2.0*fd_step)
-
+                
                 x(k) = x(k) + fd_step
                 
             end do 
-
+            
             if (this%trim%verbose) then
                 write(*,*) ""
                 write(*,*) "     Jacobian = "
@@ -663,7 +699,7 @@ contains
             
             R = calc_R(this, x, n_free)
             max_R = maxval(abs(R))
-
+            
             if (this%trim%verbose) then
                 write(*,'(A, *(1x,ES24.16))') "   R new = ", R
                 write(*,'(A, *(1x,ES24.16))') "     eps = ", max_R
@@ -723,13 +759,29 @@ contains
             write(*,'(A, 1(1x,ES22.14))') "                load factor = ", this%trim%load_factor
         end if 
         
+        ! write(*,*) ""
+        ! write(*,*) x(7)*180./pi
+        ! write(*,*) x(8)*180./pi
+        ! write(*,*) x(1)*180./pi
+        ! write(*,*) x(2)*180./pi
+        ! write(*,*) this%init_state(4)*180./pi
+        ! write(*,*) this%init_state(5)*180./pi
+        ! write(*,*) this%init_state(6)*180./pi
+        ! write(*,*) this%init_state(14)*this%controls(1)%display_units
+        ! write(*,*) this%init_state(15)*this%controls(2)%display_units
+        ! write(*,*) this%init_state(16)*this%controls(3)%display_units
+        ! write(*,*) this%init_state(17)*this%controls(4)%display_units
+
+
         
         this%trimming = .false.
         this%limit_controls = .true.
-    
+        if (this%atm%turb_model_allowed) this%atm%turb_on = .true.
+       
+        
     end subroutine init_to_trim
-
-
+    
+    
     function calc_R(this, x, n_free) result(R)
         implicit none
         type(vehicle_type) :: this
@@ -740,7 +792,7 @@ contains
         real :: u, v, w, V0, grav, ac
         real :: c1, pw
         integer :: last
-
+        
         ca = cos(x(1))
         sa = sin(x(1))
         cb = cos(x(2))
@@ -749,7 +801,7 @@ contains
         sp = sin(x(7))
         ct = cos(x(8))
         st = sin(x(8))
-
+        
         V0 = this%init_V
         u = V0*ca*cb
         v = V0*sb
@@ -866,19 +918,24 @@ contains
         real :: CLnewt, CDnewt, Cmnewt, sigma, pos, neg
         real :: Z_pot,T,Press,rho,a, mu, ca, sa, cb, sb, sign_a, pbar, qbar, rbar
         real :: da, de, dr, tau
-        real :: FTx, FTy, FTz, MTx, MTy, MTz
+        real :: thrust, Tvec(3), Tmoments(3)
+        real :: turb(6)
+        real :: Cxyzlmn(6), db1(1), db2(2), db3(3), db6(6), alpha_deg, beta_deg, de_deg
+        logical :: verbose_database
 
         if (verbose2 .and. .not. this%trimming) then
             write(*, '(A, 21(1x,ES20.12))')" state coming in = ", y
         end if
+
+        turb = atmosphere_get_turbulence(this%atm, y)
         
         ! make dummy variables for readibility
-        u  = y(1)
-        v  = y(2)
-        w  = y(3)
-        p  = y(4) 
-        q  = y(5)
-        r  = y(6)
+        u  = y(1) + turb(1)
+        v  = y(2) + turb(2)
+        w  = y(3) + turb(3)
+        p  = y(4) + turb(4)
+        q  = y(5) + turb(5)
+        r  = y(6) + turb(6)
         xf = y(7) 
         yf = y(8)
         zf = y(9)
@@ -972,6 +1029,176 @@ contains
             Cm = this%Cm0 + this%Cma*alpha + this%Cmqbar*qbar + this%Cmahat*alpha_hat + this%Cmde*de
             Cn = this%Cnb*beta + (this%Cnpbar + this%Cnapbar*alpha)*pbar + this%Cnrbar*rbar + (this%Cnda + this%Cnada*alpha)*da + this%Cndr*dr
         
+            ! add in database aerodynamics
+            Cxyzlmn = 0.0
+
+            if (allocated(this%aero_database%tables)) then
+                ! for testing, ex 3.11.2
+                ! A
+                ! alpha = 5.0*PI/180.0
+                ! beta = 5.0*PI/180.0  
+                ! pbar = 0.01
+                ! qbar = 0.01
+                ! rbar = 0.01
+                ! da = 5.0*PI/180.0
+                ! de = 5.0*PI/180.0
+                ! dr = 5.0*PI/180.0
+                ! this%speed_brake = 5.0*PI/180.0
+                ! this%le_flap = 5.0*PI/180.0
+
+                ! B
+                ! alpha = 25.0*PI/180.0
+                ! beta = -5.0*PI/180.0  
+                ! pbar = -0.01
+                ! qbar = 0.01
+                ! rbar = 0.01
+                ! da = -5.0*PI/180.0
+                ! de = 10.0*PI/180.0
+                ! dr = 10.0*PI/180.0
+                ! this%speed_brake = 10.0*PI/180.0
+                ! this%le_flap = 25.0*PI/180.0
+
+                ! C
+                ! alpha = 45.0*PI/180.0
+                ! beta = -20.0*PI/180.0  
+                ! pbar = 0.01
+                ! qbar = -0.01
+                ! rbar = 0.01
+                ! da = 20.0*PI/180.0
+                ! de = -20.0*PI/180.0
+                ! dr = -20.0*PI/180.0
+                ! this%speed_brake = 60.0*PI/180.0
+                ! this%le_flap = 0.0*PI/180.0
+
+                ! D
+                ! alpha = -15.0*PI/180.0
+                ! beta = 20.0*PI/180.0  
+                ! pbar = 0.01
+                ! qbar = 0.01
+                ! rbar = -0.01
+                ! da = -20.0*PI/180.0
+                ! de = 20.0*PI/180.0
+                ! dr = -20.0*PI/180.0
+                ! this%speed_brake = 0.0*PI/180.0
+                ! this%le_flap = 10.0*PI/180.0
+
+
+                verbose_database = .false.
+                alpha_deg = alpha*180.0/PI
+                beta_deg = beta*180.0/PI
+                de_deg = de*180.0/PI
+
+                if (verbose_database) then
+                    write(*,*) ""
+                    write(*,*) "     Interpolating in Databases...."
+                    write(*,*) "Database #         Interpolation Result         |        With Multipliers"
+                end if
+
+                ! Get Cxyzlmn contributions from each database (These are specific to the F16 Database)
+
+                ! Table 1:  C(x,y,z,l,m,n)0 as a function of (elevator_deg, alpha_deg, beta_deg) 
+                ! db6 means we get 6 outputs from the database, such as Cx0, Cy0, Cz0, Cl0, Cm0, Cn0, or certain contributions to Cxyzlmn
+                db6 = this%aero_database%tables(1)%interpolate([de_deg, alpha_deg, beta_deg]) 
+                Cxyzlmn = Cxyzlmn + db6
+                if (verbose_database) write(*,*) 1, db6, "|"
+
+                ! Table 2: Delta C(m) as a function of (alpha_deg)
+                db1 = this%aero_database%tables(2)%interpolate([alpha_deg]) 
+                Cxyzlmn(5) = Cxyzlmn(5) + db1(1)
+                if (verbose_database) write(*,*) 2, db1, "|", db1
+
+                ! Table 3: Delta C(m) as a function of (elevator_deg, alpha_deg)
+                db1 = this%aero_database%tables(3)%interpolate([de_deg, alpha_deg]) 
+                Cxyzlmn(5) = Cxyzlmn(5) + db1(1)
+                if (verbose_database) write(*,*) 3, db1, "|", db1
+
+                ! Table 4: C(l,n),beta as a function of (alpha_deg)
+                db2 = this%aero_database%tables(4)%interpolate([alpha_deg]) 
+                Cxyzlmn(4) = Cxyzlmn(4) + db2(1)*beta
+                Cxyzlmn(6) = Cxyzlmn(6) + db2(2)*beta
+                if (verbose_database) write(*,*) 4, db2, "|", db2*beta
+
+                ! Table 5: C(x,y,z,l,m,n),lef as a function of (alpha_deg, beta_deg)
+                db6 = this%aero_database%tables(5)%interpolate([alpha_deg, beta_deg]) 
+                Cxyzlmn = Cxyzlmn + db6*this%le_flap 
+                if (verbose_database) write(*,*) 5, db6, "|", db6*this%le_flap
+                
+                ! Table 6: C(x,z,m),qbar_lef as a function of (alpha_deg)
+                db3 = this%aero_database%tables(6)%interpolate([alpha_deg]) 
+                Cxyzlmn(1) = Cxyzlmn(1) + db3(1)*qbar*this%le_flap 
+                Cxyzlmn(3) = Cxyzlmn(3) + db3(2)*qbar*this%le_flap 
+                Cxyzlmn(5) = Cxyzlmn(5) + db3(3)*qbar*this%le_flap 
+                if (verbose_database) write(*,*) 6, db3, "|", db3*qbar*this%le_flap
+
+                ! Table 7: C(x,z,m),qbar as a function of (alpha_deg)
+                db3 = this%aero_database%tables(7)%interpolate([alpha_deg]) 
+                Cxyzlmn(1) = Cxyzlmn(1) + db3(1)*qbar 
+                Cxyzlmn(3) = Cxyzlmn(3) + db3(2)*qbar 
+                Cxyzlmn(5) = Cxyzlmn(5) + db3(3)*qbar 
+                if (verbose_database) write(*,*) 7, db3, "|", db3*qbar
+
+                ! Table 8: C(x,z,m),speedbrake as a function of (alpha_deg)
+                db3 = this%aero_database%tables(8)%interpolate([alpha_deg]) 
+                Cxyzlmn(1) = Cxyzlmn(1) + db3(1)*this%speed_brake 
+                Cxyzlmn(3) = Cxyzlmn(3) + db3(2)*this%speed_brake 
+                Cxyzlmn(5) = Cxyzlmn(5) + db3(3)*this%speed_brake 
+                if (verbose_database) write(*,*) 8, db3, "|", db3*this%speed_brake
+                
+                ! Table 9: C(y,l,n),aileron_lef as a function of (alpha_deg, beta_deg)
+                db3 = this%aero_database%tables(9)%interpolate([alpha_deg, beta_deg]) 
+                Cxyzlmn(2) = Cxyzlmn(2) + db3(1)*da*this%le_flap 
+                Cxyzlmn(4) = Cxyzlmn(4) + db3(2)*da*this%le_flap 
+                Cxyzlmn(6) = Cxyzlmn(6) + db3(3)*da*this%le_flap 
+                if (verbose_database) write(*,*) 9, db3, "|", db3*da*this%le_flap
+
+                ! Table 10: C(y,l,n),aileron as a function of (alpha_deg, beta_deg)
+                db3 = this%aero_database%tables(10)%interpolate([alpha_deg, beta_deg]) 
+                Cxyzlmn(2) = Cxyzlmn(2) + db3(1)*da 
+                Cxyzlmn(4) = Cxyzlmn(4) + db3(2)*da 
+                Cxyzlmn(6) = Cxyzlmn(6) + db3(3)*da 
+                if (verbose_database) write(*,*) 10, db3, "|", db3*da
+
+                ! Table 11: C(y,l,n),pbar_lef as a function of (alpha_deg)
+                db3 = this%aero_database%tables(11)%interpolate([alpha_deg]) 
+                Cxyzlmn(2) = Cxyzlmn(2) + db3(1)*pbar*this%le_flap 
+                Cxyzlmn(4) = Cxyzlmn(4) + db3(2)*pbar*this%le_flap 
+                Cxyzlmn(6) = Cxyzlmn(6) + db3(3)*pbar*this%le_flap 
+                if (verbose_database) write(*,*) 11, db3, "|", db3*pbar*this%le_flap
+                
+                ! Table 12: C(y,l,n),pbar as a function of (alpha_deg)
+                db3 = this%aero_database%tables(12)%interpolate([alpha_deg]) 
+                Cxyzlmn(2) = Cxyzlmn(2) + db3(1)*pbar 
+                Cxyzlmn(4) = Cxyzlmn(4) + db3(2)*pbar 
+                Cxyzlmn(6) = Cxyzlmn(6) + db3(3)*pbar 
+                if (verbose_database) write(*,*) 12, db3, "|", db3*pbar
+
+                ! Table 13: C(y,l,n),rbar_lef as a function of (alpha_deg)
+                db3 = this%aero_database%tables(13)%interpolate([alpha_deg]) 
+                Cxyzlmn(2) = Cxyzlmn(2) + db3(1)*rbar*this%le_flap 
+                Cxyzlmn(4) = Cxyzlmn(4) + db3(2)*rbar*this%le_flap 
+                Cxyzlmn(6) = Cxyzlmn(6) + db3(3)*rbar*this%le_flap 
+                if (verbose_database) write(*,*) 13, db3, "|", db3*rbar*this%le_flap
+
+                ! Table 14: C(y,l,n),rbar as a function of (alpha_deg)
+                db3 = this%aero_database%tables(14)%interpolate([alpha_deg]) 
+                Cxyzlmn(2) = Cxyzlmn(2) + db3(1)*rbar 
+                Cxyzlmn(4) = Cxyzlmn(4) + db3(2)*rbar 
+                Cxyzlmn(6) = Cxyzlmn(6) + db3(3)*rbar 
+                if (verbose_database) write(*,*) 14, db3, "|", db3*rbar
+
+                ! Table 15: C(y,l,n),rudder as a function of (alpha_deg, beta_deg)
+                db3 = this%aero_database%tables(15)%interpolate([alpha_deg, beta_deg]) 
+                Cxyzlmn(2) = Cxyzlmn(2) + db3(1)*dr 
+                Cxyzlmn(4) = Cxyzlmn(4) + db3(2)*dr 
+                Cxyzlmn(6) = Cxyzlmn(6) + db3(3)*dr 
+                if (verbose_database) write(*,*) 15, db3, "|", db3*dr
+                
+                
+                if (verbose_database) write(*,*) "Database Final Cxyzlmn:  ", Cxyzlmn
+
+
+            end if 
+
             if (this%include_stall) then
                 ! stall CL
                 CLnewt = 2.0*sign_a*sa*sa*ca
@@ -996,20 +1223,8 @@ contains
             end if
         end if
             
-        ! limit throttle to 0 to 100
-        ! if (tau < 0.0) then
-        !     tau = 0.0
-        ! else if (tau > 1.0) then
-        !     tau = 1.0
-        ! end if
-        
-        ! Calculate forces and moments due to throttle
-        FTx = tau*this%thrust_T0*(rho/this%rho0)**this%thrust_Ta
-        FTy = 0.
-        FTz = 0.
-        MTx = 0.
-        MTy = 0.
-        MTz = 0.
+    
+
         ! trimming = .false. ! for debugging
         if (verbose2 .and. .not. this%trimming) then
             write(*,*) "Intermediate values in pseudo_aero"
@@ -1048,25 +1263,46 @@ contains
             ! write(*,*) "de [deg] = ", this%controls(2)*180./pi
             ! write(*,*) "dr [deg] = ", this%controls(3)*180./pi
             ! write(*,*) "throttle = ", this%controls(4)
-
-            write(*,*) ""
-            write(*,*) "Forces and moments due to thrust"
-            write(*,*) "FTx = ", FTx
-            write(*,*) "FTy = ", FTy
-            write(*,*) "FTz = ", FTz
-            write(*,*) "MTx = ", MTx
-            write(*,*) "MTy = ", MTy
-            write(*,*) "MTz = ", MTz
         end if
 
         ! update forces and moments
-        FM(1) =  FTx + -0.5*rho*(V_mag**2)*this%ref_area*(CD*ca*cb + CS*ca*sb - CL*sa) ! + tau*pow(rho/m_rho0, m_a)*(m_T0 + m_T1*V + m_T2*V*V) !F_xb
-        FM(2) =  FTy +  0.5*rho*(V_mag**2)*this%ref_area*(CS*cb - CD*sb)           ! F_yb
-        FM(3) =  FTz + -0.5*rho*(V_mag**2)*this%ref_area*(CD*sa*cb + CS*sa*sb + CL*ca) ! F_zb
-        FM(4) =  MTx +  0.5*rho*(V_mag**2)*this%ref_area*this%ref_lat*C_l  ! M_xb
-        FM(5) =  MTy +  0.5*rho*(V_mag**2)*this%ref_area*this%ref_long*Cm  ! M_yb
-        FM(6) =  MTz +  0.5*rho*(V_mag**2)*this%ref_area*this%ref_lat*Cn  ! M_zb
-        ! write(*,*) FM(5), rho, V_mag, ref_area, ref_long, Cm
+        ! FM(1) =  FTx + -0.5*rho*(V_mag**2)*this%ref_area*(CD*ca*cb + CS*ca*sb - CL*sa) ! + tau*pow(rho/m_rho0, m_a)*(m_T0 + m_T1*V + m_T2*V*V) !F_xb
+        ! FM(2) =  FTy +  0.5*rho*(V_mag**2)*this%ref_area*(CS*cb - CD*sb)           ! F_yb
+        ! FM(3) =  FTz + -0.5*rho*(V_mag**2)*this%ref_area*(CD*sa*cb + CS*sa*sb + CL*ca) ! F_zb
+        ! FM(4) =  MTx +  0.5*rho*(V_mag**2)*this%ref_area*this%ref_lat*C_l  ! M_xb
+        ! FM(5) =  MTy +  0.5*rho*(V_mag**2)*this%ref_area*this%ref_long*Cm  ! M_yb
+        ! FM(6) =  MTz +  0.5*rho*(V_mag**2)*this%ref_area*this%ref_lat*Cn  ! M_zb
+        
+        FM(1) =  -(CD*ca*cb + CS*ca*sb - CL*sa) 
+        FM(2) =   (CS*cb - CD*sb)          
+        FM(3) =  -(CD*sa*cb + CS*sa*sb + CL*ca) 
+        FM(4) =   C_l*this%ref_lat  
+        FM(5) =   Cm*this%ref_long 
+        FM(6) =   Cn*this%ref_lat  
+
+        
+        ! add in database Forces and Moments
+        FM(1:3) = FM(1:3) + Cxyzlmn(1:3)
+        FM(4) = FM(4) + Cxyzlmn(4)*this%ref_lat
+        FM(5) = FM(5) + Cxyzlmn(5)*this%ref_long
+        FM(6) = FM(6) + Cxyzlmn(6)*this%ref_lat
+        
+        FM = 0.5*rho*(V_mag**2)*this%ref_area*FM
+
+        
+        ! shift aero ref location
+        ! write(*,*) " forces", FM(1:3)
+        ! write(*,*) " moments before cross", FM(4:6)
+        FM(4:6) = FM(4:6) + cross3(this%aero_ref_loc, FM(1:3))
+        
+        if (verbose2 .and. .not. this%trimming) then
+            write(*,*) ""
+            write(*,*) "Moments after areo reference shift"
+            write(*,*) "Mx = ", FM(4)
+            write(*,*) "My = ", FM(5)
+            write(*,*) "Mz = ", FM(6)
+            write(*, '(A, 6(1x,ES20.12))')"      pseuo aero = ", FM
+        end if
 
         if (verbose2 .and. .not. this%trimming) then
             write(*,*) ""
@@ -1081,19 +1317,26 @@ contains
             write(*,*) "Mz = ", FM(6)
         end if
 
-        ! shift aero ref location
-        ! write(*,*) " forces", FM(1:3)
-        ! write(*,*) " moments before cross", FM(4:6)
-        FM(4:6) = FM(4:6) + cross3(this%aero_ref_loc, FM(1:3))
+        ! Calculate forces and moments due to thrust
+        thrust =  tau*this%thrust_T0*(rho/this%rho0)**this%thrust_Ta
+        Tvec(:) = 0.0
+        Tvec(1) = thrust
+        Tvec = quat_dependent_to_base(Tvec, this%thrust_quat)
+        Tmoments = cross3(this%thrust_loc, Tvec)
+        FM(1:3) = FM(1:3) + Tvec(:)
+        FM(4:6) = FM(4:6) + Tmoments(:)
 
         if (verbose2 .and. .not. this%trimming) then
             write(*,*) ""
-            write(*,*) "Moments after areo reference shift"
-            write(*,*) "Mx = ", FM(4)
-            write(*,*) "My = ", FM(5)
-            write(*,*) "Mz = ", FM(6)
-            write(*, '(A, 6(1x,ES20.12))')"      pseuo aero = ", FM
-        end if
+            write(*,*) "Forces and moments due to thrust"
+            write(*,*) "FTx = ", Tvec(1)
+            write(*,*) "FTy = ", Tvec(2)
+            write(*,*) "FTz = ", Tvec(3)
+
+            write(*,*) "MTx = ", Tmoments(1)
+            write(*,*) "MTy = ", Tmoments(2)
+            write(*,*) "MTz = ", Tmoments(3)
+        end if       
      
     end function pseudo_aero
 

@@ -1,0 +1,32 @@
+{
+    "camera" : {
+        "location[ft]" : [0.0, 0.0, 0.0],
+        "orientation[deg]" : [0.0, -10.0, 0.0],
+        "view_plane": {
+            "distance[ft]": 1.0,
+            "angle[deg]" : 60,
+            "aspect_ratio" : 2
+            }
+        },
+    "connections" : {
+        "receive_states" : {
+            "type" : "receive",
+            "number_of_values" : 14,
+            "refresh_rate" : 100,
+            "channel_type" : "udp",
+            "double_precision" : false,
+            "wait_for_data" : true,
+            "verbose" : false,
+            "port_ID" : 50000
+        }
+    },
+    "scene": {
+        "ground": {
+            "type": "grid",
+            "altitude[ft]": 0.0,
+            "grid_number" : 100,
+            "grid_scale[ft]": 500.0,
+            "color" : "black"
+            }
+        }
+}

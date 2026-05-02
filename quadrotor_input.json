@@ -1,0 +1,229 @@
+{
+    "simulation" : {
+        "time_step[s]" : 0.01,
+        "end_time[s]" : 0.02,
+        "print_rate" : 1,
+        "gravity_relief": true,
+        "save_states" : false,
+        "verbose" : true,
+        "verbose2" : false,
+        "rk4_verbose" : false,
+        "geographic_model" : "none"
+    },
+    "atmosphere":{
+        "constant_wind[ft/s]": [0.0, 0.0, 0.0],
+        "turbulence":{
+            "model": "none",
+            "wingspan[ft]": 30.0,
+            "hstab_distance[ft]": 15.0,
+            "vstab_distance[ft]": 15.0,
+            "intensity": "severe",
+            "history_array_length": 40,
+            "repeatable": false,
+            "_sample": {
+                "save_filename": "turb_sample.csv",
+                "height_above_ground[ft]": 2000,
+                "dx[ft]": 5,
+                "number_of_points": 65536,
+                "psd_analyses": 100,
+                "analysis_variable": "r"
+            }
+        }
+    },
+    "vehicles" : {
+        "quadrotor" : {
+            "type" : "quadrotor",
+            "run_physics" : true,
+            "mass" : {
+                "weight[lbf]" : 5.0,
+                "Ixx[slug-ft^2]" : 0.0231,
+                "Iyy[slug-ft^2]" : 0.0231,
+                "Izz[slug-ft^2]" : 0.0391,
+                "Ixy[slug-ft^2]" : 0.0,
+                "Ixz[slug-ft^2]" : 0.0,
+                "Iyz[slug-ft^2]" : 0.0,
+                "_h[slug-ft^2/s]" : [0.0, 0.0, 0.0]
+            },
+            "propulsion" : {
+                "prop_1": {
+                    "type" : "propeller_polynomial",
+                    "location[ft]" : [1.0, 1.0, -0.25],
+                    "orientation[deg]" : [0.0, 90.0, 0.0],
+                    "diameter[ft]" : 1.0,
+                    "Ixx[slug-ft^2]" : 0.000095231,
+                    "rotation" : "RH",
+                    "CT(J)" : [0.0560, -0.0704, -0.1027],
+                    "CPb(J)" : [0.0137, 0.0144, -0.0850],
+                    "CN,alpha(J)" : [0.0, 0.0036, 0.0160, 0.0148],
+                    "Cn,alpha(J)" : [0.0, -0.0112, 0.0029, 0.0050]
+                },
+                "prop_2": {
+                    "type" : "propeller_polynomial",
+                    "location[ft]" : [-1.0, 1.0, -0.25],
+                    "orientation[deg]" : [0.0, 90.0, 0.0],
+                    "diameter[ft]" : 1.0,
+                    "Ixx[slug-ft^2]" : 0.000095231,
+                    "rotation" : "LH",
+                    "CT(J)" : [0.0560, -0.0704, -0.1027],
+                    "CPb(J)" : [0.0137, 0.0144, -0.0850],
+                    "CN,alpha(J)" : [0.0, 0.0036, 0.0160, 0.0148],
+                    "Cn,alpha(J)" : [0.0, -0.0112, 0.0029, 0.0050]
+                },
+                "prop_3": {
+                    "type" : "propeller_polynomial",
+                    "location[ft]" : [-1.0, -1.0, -0.25],
+                    "orientation[deg]" : [0.0, 90.0, 0.0],
+                    "diameter[ft]" : 1.0,
+                    "Ixx[slug-ft^2]" : 0.000095231,
+                    "rotation" : "RH",
+                    "CT(J)" : [0.0560, -0.0704, -0.1027],
+                    "CPb(J)" : [0.0137, 0.0144, -0.0850],
+                    "CN,alpha(J)" : [0.0, 0.0036, 0.0160, 0.0148],
+                    "Cn,alpha(J)" : [0.0, -0.0112, 0.0029, 0.0050]
+                },
+                "prop_4": {
+                    "type" : "propeller_polynomial",
+                    "location[ft]" : [1.0, -1.0, -0.25],
+                    "orientation[deg]" : [0.0, 90.0, 0.0],
+                    "diameter[ft]" : 1.0,
+                    "Ixx[slug-ft^2]" : 0.000095231,
+                    "rotation" : "LH",
+                    "CT(J)" : [0.0560, -0.0704, -0.1027],
+                    "CPb(J)" : [0.0137, 0.0144, -0.0850],
+                    "CN,alpha(J)" : [0.0, 0.0036, 0.0160, 0.0148],
+                    "Cn,alpha(J)" : [0.0, -0.0112, 0.0029, 0.0050]
+                }
+            },
+            "aerodynamics" : {
+                "reference" : {
+                    "area[ft^2]" : 0.0,
+                    "longitudinal_length[ft]" : 0.5,
+                    "lateral_length[ft]" : 1.0
+                }
+            },
+            "control_effectors" : {
+                "1" : {
+                    "name" : "prop_1",
+                    "units" : "thrust[lbf]",
+                    "dynamics_order" : 0,
+                    "magnitude_limits" : [0, 10000]
+                },
+                "2" : {
+                    "name" : "prop_2",
+                    "units" : "thrust[lbf]",
+                    "dynamics_order" : 0,
+                    "magnitude_limits" : [0, 10000]
+                },
+                "3" : {
+                    "name" : "prop_3",
+                    "units" : "thrust[lbf]",
+                    "dynamics_order" : 0,
+                    "magnitude_limits" : [0, 10000]
+                },
+                "4" : {
+                    "name" : "prop_4",
+                    "units" : "thrust[lbf]",
+                    "dynamics_order" : 0,
+                    "magnitude_limits" : [0, 10000]
+                }
+            },
+            "_controller" : {
+                "set_trim_bias" : false,
+                "connections" : {
+                    "receive_pilot_commands":{
+                        "type" : "receive",
+                        "number_of_values" : 3,
+                        "refresh_rate" : 1000,
+                        "channel_type" : "file",
+                        "filename": "pilot_commands_12.6.3.csv",
+                        "database_type" : "rectilinear",
+                        "double_precision" : true 
+                    }
+                },
+                "PID" : {
+                    "p->aileron" : {
+                        "update_rate[hz]" : 1000,
+                        "units" : "deg",
+                        "limits" : [-21.5, 21.5],
+                        "kp" : -35.0,
+                        "ki" : -20.0,
+                        "kd" : 0.0,
+                        "dynamic_pressure_schedule": true
+                    },
+                    "q->elevator" : {
+                        "update_rate[hz]" : 1000,
+                        "units" : "deg",
+                        "limits" : [-25.0, 25.0],
+                        "kp" : -80.0,
+                        "ki" : -100.0,
+                        "kd" : 0.0,
+                        "dynamic_pressure_schedule": true
+                    },
+                    "r->rudder" : {
+                        "update_rate[hz]" : 1000,
+                        "units" : "deg",
+                        "limits" : [-30.0, 30.0],
+                        "kp" : -100.0,
+                        "ki" : -100.0,
+                        "kd" : 0.0,
+                        "dynamic_pressure_schedule": true
+                    },
+                    "bank->p" : {
+                        "update_rate[hz]" : 1000,
+                        "units" : "deg",
+                        "limits" : [-1000.0, 1000.0],
+                        "kp" : 3.0,
+                        "ki" : 0.5,
+                        "kd" : 0.0
+                    },
+                    "gamma->q" : {
+                        "update_rate[hz]" : 1000,
+                        "units" : "deg",
+                        "limits" : [-1000.0, 1000.0],
+                        "kp" : 0.4,
+                        "ki" : 0.05,
+                        "kd" : 0.0
+                    },
+                    "V->throttle" : {
+                        "update_rate[hz]" : 1000,
+                        "limits" : [0.0, 1.0],
+                        "kp" : 0.01,
+                        "ki" : 0.002,
+                        "kd" : 0.0
+                    }
+                }
+            },
+            "initial" : {
+                "airspeed[ft/s]" : 0.0,
+                "altitude[ft]" : 0.0,
+                "latitude[deg]" : 0.0,
+                "longitude[deg]" : 0.0,
+                "Euler_angles[deg]" : [0.0, 0.0, 0.0],
+                "type" : "state",
+                "state" : {
+                    "angle_of_attack[deg]" : 0.0,
+                    "sideslip_angle[deg]" : 0.0,
+                    "p[deg/s]" : 0.0,
+                    "q[deg/s]" : 0.0,
+                    "r[deg/s]" : 0.0,
+                    "_controls" : [7000.0, 7000.0, 7000.0, 7000.0],
+                    "controls" : [1.25, 1.25, 1.25, 1.25],
+                    "__controls" : [0.05, 0.05, 0.05, 0.05]
+                },
+                "trim" : {
+                    "type" : "sct",
+                    "relative_climb_angle[deg]" : 10.0,
+                    "_sideslip_angle[deg]" : -10.0,
+                    "load_factor" : 1.0,
+                    "solver" : {
+                        "finite_difference_step_size" : 0.01,
+                        "relaxation_factor" : 0.99,
+                        "tolerance" : 1.0e-14,
+                        "max_iterations" : 1000,
+                        "verbose" : false
+                    }
+                }
+            }
+        }
+    }
+}

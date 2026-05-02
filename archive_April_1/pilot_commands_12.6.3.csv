@@ -1,0 +1,5 @@
+parameter,independent_variables,1
+time,bank[deg],gamma[deg],V[ft/s]
+0.0,20.0,0.0,350.0
+10.0,20.0,0.0,350.0
+400.0,20.0,0.0,350.0
